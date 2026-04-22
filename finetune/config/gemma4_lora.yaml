@@ -1,0 +1,38 @@
+# LoRA fine-tuning config for Gemma 4 4B-IT
+# Advantage: runs on single RTX 4090 (~10G VRAM), faster iteration
+model:
+  base_model: "google/gemma-4-4b-it"
+  model_family: "gemma"
+  load_in_4bit: false        # 4B is small enough for float16 LoRA directly
+  torch_dtype: "float16"
+
+lora:
+  r: 16
+  lora_alpha: 32
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+training:
+  output_dir: "./checkpoints/gemma4_ark"
+  num_train_epochs: 3
+  per_device_train_batch_size: 4    # larger batch since model is smaller
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05
+  fp16: true
+  logging_steps: 10
+  save_steps: 100
+  eval_steps: 100
+  evaluation_strategy: "steps"
+  save_total_limit: 3
+  report_to: "wandb"
+  dataloader_num_workers: 4
+  max_seq_length: 4096             # Gemma 4 supports longer context
+
+data:
+  train_file: "./data/processed/train.jsonl"
+  eval_file: "./data/processed/eval.jsonl"
+  system_prompt: "你是明日方舟（Arknights）世界中的内容创作助手，精通泰拉大陆的历史、干员档案与源石技艺体系。请根据设定生成符合世界观的内容。"
