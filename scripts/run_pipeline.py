@@ -9,6 +9,8 @@ Usage:
   python scripts/run_pipeline.py --mode all        # Run full pipeline
 """
 
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import logging
 import subprocess

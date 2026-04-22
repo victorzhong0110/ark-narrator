@@ -6,6 +6,8 @@ Usage:
   python scripts/compare_models.py --samples data/sample/sample_data.json
 """
 
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import argparse
 import logging
@@ -20,11 +22,11 @@ logger = logging.getLogger(__name__)
 
 MODELS = {
     "gemma4-ark": {
-        "base_model": "google/gemma-4-4b-it",
-        "adapter_path": "./checkpoints/gemma4_ark/final",
-        "label": "Gemma 4 4B + LoRA",
-        "params": "4B",
-        "vram": "~10 GB",
+        "base_model": "google/gemma-4-27b-it",
+        "adapter_path": "./checkpoints/gemma4_27b_ark/final",
+        "label": "Gemma 4 27B-A4B + QLoRA",
+        "params": "27B (MoE, ~4B active)",
+        "vram": "~14 GB (inference)",
     },
     "qwen25-ark": {
         "base_model": "Qwen/Qwen2.5-7B-Instruct",

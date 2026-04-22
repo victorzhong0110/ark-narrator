@@ -1,36 +1,43 @@
-# LoRA fine-tuning config for Gemma 4 4B-IT
-# Advantage: runs on single RTX 4090 (~10G VRAM), faster iteration
+# QLoRA fine-tuning config for Gemma 4 27B-A4B (MoE)
+# Architecture: 27B total params, ~4B active per forward pass
+# VRAM: ~16-18 GB with 4-bit quantization (A100 40G recommended)
+# Inference cost: comparable to dense 4B — MoE efficiency advantage
 model:
-  base_model: "google/gemma-4-4b-it"
+  base_model: "google/gemma-4-27b-it"
   model_family: "gemma"
-  load_in_4bit: false        # 4B is small enough for float16 LoRA directly
-  torch_dtype: "float16"
+  load_in_4bit: true             # QLoRA necessary at 27B total weights
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
 
 lora:
   r: 16
   lora_alpha: 32
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  # Apply LoRA to attention layers only (MoE expert layers are too large)
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
 
 training:
-  output_dir: "./checkpoints/gemma4_ark"
+  output_dir: "./checkpoints/gemma4_27b_ark"
   num_train_epochs: 3
-  per_device_train_batch_size: 4    # larger batch since model is smaller
-  gradient_accumulation_steps: 4
-  learning_rate: 2.0e-4
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-4           # slightly lower lr for larger model
   lr_scheduler_type: "cosine"
   warmup_ratio: 0.05
-  fp16: true
+  bf16: true                      # bfloat16 more stable than fp16 for large models
+  fp16: false
+  gradient_checkpointing: true    # essential at 27B to save VRAM
   logging_steps: 10
   save_steps: 100
   eval_steps: 100
   evaluation_strategy: "steps"
-  save_total_limit: 3
+  save_total_limit: 2
   report_to: "wandb"
-  dataloader_num_workers: 4
-  max_seq_length: 4096             # Gemma 4 supports longer context
+  dataloader_num_workers: 2
+  max_seq_length: 4096
 
 data:
   train_file: "./data/processed/train.jsonl"

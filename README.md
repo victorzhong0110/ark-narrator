@@ -19,7 +19,7 @@
 
 ## 🧪 核心实验：Gemma 4 4B vs Qwen2.5-7B
 
-| | Gemma 4 4B + LoRA | Qwen2.5-7B + QLoRA |
+| | Gemma 4 27B-A4B + QLoRA | Qwen2.5-7B + QLoRA |
 |---|---|---|
 | 参数量 | 4B | 7B |
 | 显存需求 | ~10 GB（float16） | ~12 GB（4-bit） |
@@ -32,7 +32,7 @@
 
 | 模型 | 世界观还原 | 角色一致性 | 语言流畅度 | 综合 |
 |------|-----------|-----------|-----------|------|
-| Gemma 4 4B + LoRA | - | - | - | - |
+| Gemma 4 27B-A4B + QLoRA | - | - | - | - |
 | Qwen2.5-7B + QLoRA | - | - | - | - |
 | GPT-4o（无微调基线） | - | - | - | - |
 
@@ -52,7 +52,7 @@ finetune/config/             finetune/config/
 qwen2_5_lora.yaml            gemma4_lora.yaml
         │                            │
         ▼                            ▼
-  Qwen2.5-7B + QLoRA      Gemma 4 4B + LoRA
+  Qwen2.5-7B + QLoRA      Gemma 4 27B-A4B + QLoRA
         │                            │
         └──────────┬─────────────────┘
                    ▼
@@ -108,17 +108,37 @@ python scripts/run_pipeline.py --mode scrape
 
 # 2. 构建数据集
 python scripts/run_pipeline.py --mode build
+```
 
-# 3A. 训练 Gemma 4 4B（需要 ~10G VRAM）
-python finetune/train.py --config finetune/config/gemma4_lora.yaml
+### 方案 A：本地训练（Apple Silicon，推荐先跑这个）
 
-# 3B. 训练 Qwen2.5-7B（需要 ~12G VRAM）
-python finetune/train.py --config finetune/config/qwen2_5_lora.yaml
+24GB 统一内存，用 MLX 无需 CUDA：
 
-# 4. 对比评估（生成 eval/results/model_comparison.md）
+```bash
+pip install mlx-lm
+
+# Qwen2.5-7B — 24GB 非常舒适，快速迭代
+python finetune/train_mlx.py --config finetune/config/qwen2_5_mlx.yaml
+
+# Gemma 4 27B-A4B — 本地验证流程，正式结果见方案 B
+python finetune/train_mlx.py --config finetune/config/gemma4_mlx.yaml
+```
+
+### 方案 B：云端训练（Kaggle A100，出对比实验正式结果）
+
+```bash
+# 在 Kaggle Notebook 中运行（免费 A100 40GB）
+python finetune/train.py --config finetune/config/gemma4_lora.yaml   # Gemma 4 27B-A4B QLoRA
+python finetune/train.py --config finetune/config/qwen2_5_lora.yaml  # Qwen2.5-7B QLoRA
+```
+
+### 评估 & 推理
+
+```bash
+# 对比报告（需要两个模型都训练完）
 python scripts/compare_models.py
 
-# 5. 启动推理服务
+# 启动本地推理服务
 python scripts/run_pipeline.py --mode serve
 ```
 

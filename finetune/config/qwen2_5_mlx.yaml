@@ -1,0 +1,27 @@
+# MLX LoRA fine-tuning — runs natively on Apple Silicon (MPS, unified memory)
+# 24GB unified memory: comfortable for Qwen2.5-7B LoRA
+model:
+  base_model: "mlx-community/Qwen2.5-7B-Instruct-4bit"  # pre-quantized for MLX
+  model_family: "qwen"
+
+lora:
+  rank: 16
+  scale: 32.0          # equivalent to lora_alpha
+  dropout: 0.05
+
+training:
+  output_dir: "./checkpoints/qwen2_5_mlx"
+  iters: 1000
+  batch_size: 4
+  learning_rate: 2.0e-4
+  lr_schedule: "cosine_decay"
+  warmup: 50
+  val_batches: 25
+  save_every: 100
+  adapter_file: "adapters.safetensors"
+  max_seq_length: 2048
+  grad_checkpoint: false   # not needed at 7B with 24GB
+
+data:
+  train_file: "./data/processed/train.jsonl"
+  eval_file: "./data/processed/eval.jsonl"

@@ -1,0 +1,24 @@
+# MLX LoRA fine-tuning for Gemma 4 27B-A4B
+# 24GB unified memory: tight but feasible with grad checkpoint
+# Use this for local iteration; use Kaggle A100 for full training
+model:
+  base_model: "mlx-community/gemma-4-27b-it-4bit"
+  model_family: "gemma"
+
+lora:
+  rank: 8              # lower rank to fit 24GB
+  scale: 16.0
+  dropout: 0.05
+
+training:
+  output_dir: "./checkpoints/gemma4_mlx"
+  iters: 500           # fewer iters for local quick validation
+  batch_size: 1
+  learning_rate: 1.0e-4
+  lr_schedule: "cosine_decay"
+  warmup: 30
+  val_batches: 10
+  save_every: 100
+  adapter_file: "adapters.safetensors"
+  max_seq_length: 2048
+  grad_checkpoint: true  # enable to save memory at 27B
