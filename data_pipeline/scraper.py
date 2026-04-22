@@ -1,95 +1,140 @@
 """
-Arknights lore data scraper.
-Sources: PRTS Wiki (prts.wiki) — operator profiles, story texts, world lore.
+Arknights lore data fetcher.
+Source: Kengxxiao/ArknightsGameData (official game data, public GitHub repo)
+  - character_table.json  → operator basic info
+  - handbook_info_table.json → operator profiles / lore (档案资料)
+  - story_review_table.json → main story chapter list
+  - activity_table.json → event info
+
+No scraping needed — raw GitHub CDN, no anti-bot issues.
 """
 
-import requests
-import time
 import json
+import time
 import logging
+import requests
 from pathlib import Path
-from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PRTS_BASE = "https://prts.wiki"
-HEADERS = {"User-Agent": "ArkNarrator-Research/1.0 (academic use)"}
 RAW_DIR = Path("./data/raw")
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
+BASE_URL = (
+    "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData"
+    "/master/zh_CN/gamedata/excel"
+)
+
+TABLES = {
+    "character_table":   f"{BASE_URL}/character_table.json",
+    "handbook_info":     f"{BASE_URL}/handbook_info_table.json",
+    "story_review":      f"{BASE_URL}/story_review_table.json",
+}
+
+
+def fetch_json(url: str, name: str) -> dict:
+    cache = RAW_DIR / f"{name}.json"
+    if cache.exists():
+        logger.info(f"Using cached {name}.json")
+        with open(cache, encoding="utf-8") as f:
+            return json.load(f)
+
+    logger.info(f"Fetching {name} ...")
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    with open(cache, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    logger.info(f"Saved → {cache}")
+    return data
+
+
+class ArknightsDataFetcher:
+    def __init__(self):
+        self.chars = {}
+        self.handbook = {}
+        self.stories = {}
+
+    def load(self):
+        self.chars    = fetch_json(TABLES["character_table"], "character_table")
+        self.handbook = fetch_json(TABLES["handbook_info"],   "handbook_info")
+        self.stories  = fetch_json(TABLES["story_review"],    "story_review")
+        logger.info(
+            f"Loaded: {len(self.chars)} operators, "
+            f"{len(self.handbook.get('handbookDict', {}))} profiles"
+        )
+
+    def build_operator_profiles(self, limit: int = None) -> list[dict]:
+        """
+        Merge character_table + handbook_info into clean operator profiles.
+        Returns list of dicts ready for dataset_builder.
+        """
+        handbook_dict = self.handbook.get("handbookDict", {})
+        profiles = []
+
+        char_items = list(self.chars.items())
+        if limit:
+            char_items = char_items[:limit]
+
+        for char_id, char in tqdm(char_items, desc="Building profiles"):
+            # Skip non-operator entries (enemy units, traps, etc.)
+            if not char.get("isNotObtainable") == False and char.get("profession") == "TRAP":
+                continue
+            if char.get("profession") in ("TOKEN", "TRAP"):
+                continue
+            name = char.get("name", "")
+            if not name:
+                continue
+
+            # Get handbook (lore) data
+            hb = handbook_dict.get(char_id, {})
+            story_text_list = hb.get("storyTextAudio", [])
+
+            sections = {}
+            for story in story_text_list:
+                title = story.get("storyTitle", "")
+                text  = story.get("stories", [{}])[0].get("storyText", "") if story.get("stories") else ""
+                if title and text:
+                    sections[title] = text.strip()
+
+            if not sections:
+                continue  # skip operators with no lore yet
+
+            profiles.append({
+                "char_id":    char_id,
+                "name":       name,
+                "rarity":     char.get("rarity", ""),
+                "profession":  char.get("profession", ""),
+                "description": char.get("description", ""),
+                "tagList":    char.get("tagList", []),
+                "sections":   sections,
+            })
+
+        logger.info(f"Built {len(profiles)} operator profiles with lore")
+
+        out = RAW_DIR / "operator_profiles.json"
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(profiles, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved → {out}")
+        return profiles
+
+
+# ── Keep original interface for run_pipeline.py ───────────────────────────────
 
 class PRTSScraper:
-    """Scrape operator profiles and story content from PRTS wiki."""
+    """Backwards-compatible wrapper — now uses ArknightsGameData instead of PRTS."""
 
-    def __init__(self, delay: float = 1.5):
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
-        self.delay = delay  # polite crawl delay
+    def __init__(self, delay: float = 0):
+        self.fetcher = ArknightsDataFetcher()
 
-    def get_operator_list(self) -> list[dict]:
-        """Fetch list of all operators with basic info."""
-        url = f"{PRTS_BASE}/w/干员一览"
-        resp = self.session.get(url, timeout=15)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        operators = []
-        for row in soup.select("table.wikitable tr")[1:]:
-            cols = row.find_all("td")
-            if len(cols) < 3:
-                continue
-            name = cols[0].get_text(strip=True)
-            rarity = cols[1].get_text(strip=True)
-            profession = cols[2].get_text(strip=True)
-            if name:
-                operators.append({"name": name, "rarity": rarity, "profession": profession})
-
-        logger.info(f"Found {len(operators)} operators")
-        return operators
-
-    def get_operator_profile(self, name: str) -> dict:
-        """Fetch full operator profile: lore, story, voice lines."""
-        url = f"{PRTS_BASE}/w/{name}"
-        resp = self.session.get(url, timeout=15)
-        if resp.status_code != 200:
-            return {}
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        profile = {"name": name, "sections": {}}
-
-        # Extract profile sections (档案资料, 模组档案, 语音台词, etc.)
-        for section in soup.select(".mw-headline"):
-            section_title = section.get_text(strip=True)
-            content_div = section.find_parent().find_next_sibling()
-            if content_div:
-                profile["sections"][section_title] = content_div.get_text(
-                    separator="\n", strip=True
-                )
-
-        time.sleep(self.delay)
-        return profile
-
-    def scrape_all(self, limit: int = None) -> None:
-        """Scrape all operators and save raw data."""
-        operators = self.get_operator_list()
-        if limit:
-            operators = operators[:limit]
-
-        results = []
-        for op in tqdm(operators, desc="Scraping operators"):
-            profile = self.get_operator_profile(op["name"])
-            if profile:
-                profile.update(op)
-                results.append(profile)
-
-        out_path = RAW_DIR / "operator_profiles.json"
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved {len(results)} profiles → {out_path}")
+    def scrape_all(self, limit: int = None):
+        self.fetcher.load()
+        profiles = self.fetcher.build_operator_profiles(limit=limit)
+        logger.info(f"Done. Total profiles: {len(profiles)}")
 
 
 if __name__ == "__main__":
     scraper = PRTSScraper()
-    scraper.scrape_all(limit=50)  # start with 50 for testing
+    scraper.scrape_all(limit=20)
