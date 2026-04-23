@@ -51,6 +51,24 @@ class DataSample:
     source: str
 
 
+def clean_output(text: str) -> str:
+    """
+    Remove noise from raw game data text:
+    - 【来源】 citation blocks with broken links
+    - [链接已失效] markers
+    - Excessive whitespace
+    """
+    import re
+    # Remove 【来源】 block: everything from 【来源】 to the first blank line
+    text = re.sub(r'【来源】.*?(?=\n\n|\Z)', '', text, flags=re.DOTALL)
+    # Remove inline broken-link markers
+    text = re.sub(r'\[链接已失效\]', '', text)
+    text = re.sub(r'\[.*?链接.*?\]', '', text)
+    # Collapse multiple blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 class DatasetBuilder:
     def __init__(self):
         self.samples: list[DataSample] = []
@@ -66,14 +84,17 @@ class DatasetBuilder:
                 if not content or len(content) < 50:
                     continue
                 if "档案" in section_name:
+                    cleaned = clean_output(content)
+                    if len(cleaned) < 30:   # skip if cleaning left nothing
+                        continue
                     instr = random.choice(TEMPLATES["profile_qa"]).format(name=name)
                     self.samples.append(
                         DataSample(
                             instruction=instr,
                             input="",
-                            output=content[:800],
+                            output=cleaned[:800],
                             task_type="profile_qa",
-                            source=f"prts/{name}",
+                            source=f"ark/{name}",
                         )
                     )
 
