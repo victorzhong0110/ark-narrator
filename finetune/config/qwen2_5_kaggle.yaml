@@ -1,0 +1,48 @@
+# Kaggle A100 (40 GB) QLoRA fine-tuning config
+# Uses Qwen/Qwen2.5-7B-Instruct (full-precision base, 4-bit at runtime).
+#
+# Speed reference (A100 40 GB, seq_len=2048):
+#   roleplay 1500 steps × eff_batch 8 ≈ 5-8 min
+#   dialogue_window 1500 steps         ≈ 3-5 min (shorter sequences)
+
+model:
+  base_model: "Qwen/Qwen2.5-7B-Instruct"   # full model, NOT pre-quantized
+  model_family: "qwen"
+
+lora:
+  rank:    16       # 2× the MLX run — A100 has headroom
+  alpha:   32       # = rank × 2
+  dropout: 0.05
+
+training:
+  output_dir: "/kaggle/working/checkpoints/qwen2_5"
+
+  # Batch: per_device=2 × grad_accum=4 → effective batch = 8
+  batch_size: 2
+  gradient_accumulation_steps: 4
+
+  # LR: higher than MLX (LoRA params start from zero, need bigger steps)
+  learning_rate: 2.0e-4
+  warmup: 100
+
+  # Checkpointing (every N gradient steps)
+  save_every: 100
+
+  # Sequence length: 2048 is sufficient after long-sequence filtering
+  max_seq_length: 2048
+
+  # Gradient clipping — tighter than MLX to prevent NaN on long seqs
+  grad_clip: 0.5
+
+  # Per-format step budget
+  # Early stopping (patience=3 × save_every=100 = 300 steps) may trigger earlier.
+  iters_per_format:
+    narrative:       500    # ~6k samples, converges fast
+    dialogue_window: 1500   # ~288k samples, needs more steps
+    roleplay:        1500   # ~3.8k samples (after long-seq filter)
+    combined:        2000   # all three merged
+
+data:
+  # Kaggle dataset paths — override via --data-dir CLI flag
+  train_dir: "/kaggle/input/ark-narrator-data/processed"
+  system_prompt: "你是明日方舟（Arknights）世界中的内容创作助手，精通泰拉大陆的历史、干员档案与源石技艺体系。请根据设定生成符合世界观的内容。"

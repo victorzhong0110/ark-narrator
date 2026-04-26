@@ -1,24 +1,49 @@
-# MLX LoRA fine-tuning for Gemma 4 27B-A4B
-# 24GB unified memory: tight but feasible with grad checkpoint
-# Use this for local iteration; use Kaggle A100 for full training
+# MLX LoRA fine-tuning for Gemma 4 4B (dense)
+# 4-bit quantized: ~2GB base, easily fits 24GB unified memory.
+# Peak training memory estimate: ~8-10GB (comfortable headroom vs Qwen's ~11GB).
+#
+# NOTE: Gemma 4 26B-A4B was tried first but OOM'd at backward pass — 15.6GB weights
+#       leave no room for gradients + optimizer state on 24GB. See Obsidian notes.
+#
+# Confirm model name at: https://huggingface.co/mlx-community (search: gemma-4-4b)
+#
+# Usage:
+#   python finetune/train_mlx.py \
+#       --config finetune/config/gemma4_mlx.yaml \
+#       --format roleplay
+
 model:
-  base_model: "mlx-community/gemma-4-27b-it-4bit"
+  base_model: "mlx-community/gemma-4-E4B-it-4bit"   # HF base: google/gemma-4-E4B-it (gated — needs HF_TOKEN)
   model_family: "gemma"
 
 lora:
-  rank: 8              # lower rank to fit 24GB
+  rank: 8               # same as Qwen — 4B model has plenty of headroom
   scale: 16.0
   dropout: 0.05
+  num_layers: 8         # 4B has ~18 layers; 8 ≈ 44% coverage
 
 training:
   output_dir: "./checkpoints/gemma4_mlx"
-  iters: 500           # fewer iters for local quick validation
   batch_size: 1
-  learning_rate: 1.0e-4
-  lr_schedule: "cosine_decay"
-  warmup: 30
-  val_batches: 10
-  save_every: 100
+  learning_rate: 2.0e-5          # slightly lower than Qwen (5e-5) for fair comparison
+  lr_schedule:
+    name: cosine_decay
+    warmup: 100
+    arguments: [2.0e-5, 1500, 0]
+  warmup: 100
+  val_batches: 5
+  save_every: 200
   adapter_file: "adapters.safetensors"
-  max_seq_length: 2048
-  grad_checkpoint: true  # enable to save memory at 27B
+  max_seq_length: 2048           # 4096 OOMs on backward pass with all-42-layer K/V; 2048 fits 24GB
+  grad_checkpoint: true
+  grad_clip: 0.5
+  iters_per_format:
+    narrative:       1000
+    dialogue_window: 3000
+    roleplay:        1500
+    combined:        3000
+
+data:
+  train_file: "./data/processed/train.jsonl"
+  eval_file:  "./data/processed/eval.jsonl"
+  system_prompt: "你是明日方舟（Arknights）世界中的内容创作助手，精通泰拉大陆的历史、干员档案与源石技艺体系。请根据设定生成符合世界观的内容。"
