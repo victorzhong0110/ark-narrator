@@ -512,7 +512,7 @@ def main():
                     })
         pairs = run_human_pairwise(pairs)
 
-    # 4. Save + report
+    # 4. Save DS results before human eval (so they're never lost)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     summary = {
         "attribution":   attribution_results,
@@ -522,9 +522,20 @@ def main():
     summary_path = RESULTS_DIR / f"judge_results_{ts}.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2),
                              encoding="utf-8")
-    logger.info(f"Results → {summary_path}")
+    logger.info(f"DS results saved → {summary_path}")
 
-    include_human = args.human and any("human_winner" in p for p in pairs)
+    # 5. Human evaluation (interactive — run in a real terminal)
+    if args.human:
+        try:
+            pairs = run_human_pairwise(pairs)
+            summary["pairwise"] = pairs
+            summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+        except EOFError:
+            logger.warning("Human eval skipped (non-interactive environment). "
+                           "Run with --human in a real terminal to add your judgments.")
+
+    include_human = any("human_winner" in p for p in pairs)
     report = build_report(attribution_results, contradiction_results, pairs, include_human)
     report_path = RESULTS_DIR / f"judge_report_{ts}.md"
     report_path.write_text(report, encoding="utf-8")
