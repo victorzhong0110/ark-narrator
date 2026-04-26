@@ -1,156 +1,198 @@
 <div align="center">
 
-# 🎮 ArkNarrator
+# ⚔️ ArkNarrator
 
-**Arknights × LLM — 游戏叙事内容生成系统**
+**明日方舟 × LLM 干员对话生成系统**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-ee4c2c?logo=pytorch)](https://pytorch.org/)
-[![HuggingFace](https://img.shields.io/badge/🤗-Transformers-yellow)](https://huggingface.co/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python)](https://www.python.org/)
+[![MLX](https://img.shields.io/badge/MLX--LM-0.31.3-8B5CF6?logo=apple)](https://github.com/ml-explore/mlx-lm)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 </div>
 
-> 基于明日方舟（Arknights）世界观语料，对 **Gemma 4 4B** 与 **Qwen2.5-7B** 分别进行 LoRA 微调，  
-> 构建面向游戏策划的 NPC 对话生成、干员档案撰写与世界观一致性校验工具链。  
-> 项目核心产出：**两模型的系统性对比实验报告**。
+> 基于 PRTS Wiki 全量剧情语料，对 **Qwen2.5-7B** 与 **Gemma 4 E4B** 进行 LoRA 微调，  
+> 构建面向游戏策划的干员角色扮演生成系统，并通过 GPT-4o Judge 进行系统性双模型对比评估。
 
 ---
 
-## 🧪 核心实验：Gemma 4 4B vs Qwen2.5-7B
+## 实验结果摘要
 
-| | Gemma 4 27B-A4B + QLoRA | Qwen2.5-7B + QLoRA |
+| | Qwen2.5-7B（第四轮） | Gemma 4 E4B（第一轮） |
 |---|---|---|
-| 参数量 | 4B | 7B |
-| 显存需求 | ~10 GB（float16） | ~12 GB（4-bit） |
-| 微调方式 | LoRA（无需量化） | QLoRA（BitsAndBytes 4-bit） |
-| 中文基础 | 多语言增强版 | 中文原生优化 |
-| 推理速度 | ⚡ 更快 | 🐢 较慢 |
-| 适用场景 | 轻量部署、快速迭代 | 高质量中文生成 |
+| 基础模型 | `mlx-community/Qwen2.5-7B-Instruct-4bit` | `mlx-community/gemma-4-E4B-it-4bit` |
+| 参数量 | 7B | 4B（MoE效率优化架构） |
+| 训练框架 | MLX-LM LoRA | MLX-LM LoRA + 架构 patch |
+| max_seq_length | 4096 | 2048（24GB 内存约束） |
+| 训练 iters | 1500 | 1500 |
+| **最优 val loss** | **2.156**（iter 1200） | **3.987**（iter 1200） |
+| 角色扮演质量 | ⚠️～✅✅ 多角色稳定 | ❌ 输出破碎（截断所致） |
 
-> 评估结果（GPT-4o Judge，满分 10 分）训练完成后更新 ↓
-
-| 模型 | 世界观还原 | 角色一致性 | 语言流畅度 | 综合 |
-|------|-----------|-----------|-----------|------|
-| Gemma 4 27B-A4B + QLoRA | - | - | - | - |
-| Qwen2.5-7B + QLoRA | - | - | - | - |
-| GPT-4o（无微调基线） | - | - | - | - |
+> Gemma 的高 val loss 主要源于 `max_seq_length=2048` 对 roleplay 样本（最长 ~3800 tokens）的强截断，而非模型能力不足。在等内存条件下对比不公平，A100 环境下结论可能不同。
 
 ---
 
-## 架构
+## 核心特性
+
+- **三格式数据集构建**：Narrative 叙事续写 / Dialogue Window 对话窗口 / Roleplay 角色扮演
+- **194 干员角色卡**：基于 handbook_info 档案自动生成系统提示，含档案资料与测试记录
+- **mlx-lm Gemma4 架构修复**：一键 patch 脚本修复 0.31.3 中 126 个缺失参数问题
+- **GPT-4o Judge 评估框架**：3 维度（世界观/角色一致/流畅度）+ role_break 检测，支持规则降级
+- **FastAPI + SSE 推理服务**：多角色支持、多轮对话、流式 token 输出 + 内嵌 Demo UI
+
+---
+
+## 项目结构
 
 ```
-原始数据（PRTS Wiki）
-        │
-        ▼
-  data_pipeline/         ← 爬取 + 清洗 + 构建 instruction-tuning 数据集
-        │
-        ├─────────────────────────────┐
-        ▼                            ▼
-finetune/config/             finetune/config/
-qwen2_5_lora.yaml            gemma4_lora.yaml
-        │                            │
-        ▼                            ▼
-  Qwen2.5-7B + QLoRA      Gemma 4 27B-A4B + QLoRA
-        │                            │
-        └──────────┬─────────────────┘
-                   ▼
-             eval/ + scripts/compare_models.py
-             （GPT-4o Judge 双重评估 + 对比报告）
-                   │
-                   ▼
-             inference/server.py
-             （FastAPI + SSE，接入胜出模型）
+ArkNarrator/
+├── data_pipeline/
+│   ├── scraper.py           # PRTS Wiki 爬虫（1904 故事节点）
+│   └── dataset_builder.py   # 三格式数据集构建 + P9 噪声过滤
+├── finetune/
+│   ├── train_mlx.py         # MLX 训练入口（含 cosine LR + best checkpoint）
+│   └── config/
+│       ├── qwen2_5_mlx.yaml      # Qwen 第四轮配置
+│       └── gemma4_mlx.yaml       # Gemma E4B 配置
+├── inference/
+│   ├── engine.py            # MLX 推理引擎（多角色 + 流式）
+│   ├── server.py            # FastAPI 服务（/chat /stream /demo）
+│   └── test_roleplay.py     # 命令行快速推理测试
+├── eval/
+│   ├── gpt4o_judge.py       # GPT-4o Judge 双模型评估流水线
+│   └── results/             # 评估结果 JSON + Markdown 报告
+├── patches/
+│   └── apply_mlx_patch.py   # 修复 mlx-lm 0.31.3 Gemma4 架构缺陷
+└── checkpoints/
+    ├── qwen2_5_mlx_roleplay/    # Qwen LoRA 适配器
+    └── gemma4_mlx_roleplay/     # Gemma LoRA 适配器
 ```
-
----
-
-## 技术栈
-
-| 模块 | 技术 |
-|------|------|
-| 模型 A | Gemma 4 4B-IT（Google DeepMind） |
-| 模型 B | Qwen2.5-7B-Instruct（Alibaba） |
-| 微调框架 | HuggingFace PEFT + TRL SFTTrainer |
-| 量化 | BitsAndBytes QLoRA（仅 Qwen） |
-| 实验追踪 | Weights & Biases |
-| 推理服务 | FastAPI + SSE 流式输出 |
-| 评估 | GPT-4o Judge + Rule-based LoreChecker |
-| 数据处理 | BeautifulSoup4 + pandas |
-| 训练环境 | Google Colab Pro / Kaggle（A100 40G） |
-
----
-
-## 数据集
-
-来源：PRTS Wiki（prts.wiki）干员档案、主线剧情、世界观文本
-
-| 任务类型 | 样本数 | 说明 |
-|---------|--------|------|
-| profile_qa | ~1,500 | 干员背景问答 |
-| dialogue | ~1,000 | 角色对话生成 |
-| worldbuilding | ~500 | 世界观内容创作 |
-| **合计** | **~3,000** | **train : eval = 9 : 1** |
 
 ---
 
 ## 快速开始
 
+### 环境准备
+
 ```bash
 git clone https://github.com/victorzhong0110/ark-narrator.git
 cd ark-narrator
 pip install -r requirements.txt
-cp .env.example .env
-
-# 1. 收集数据
-python scripts/run_pipeline.py --mode scrape
-
-# 2. 构建数据集
-python scripts/run_pipeline.py --mode build
 ```
 
-### 方案 A：本地训练（Apple Silicon，推荐先跑这个）
+### 使用已有适配器推理（跳过训练）
 
-24GB 统一内存，用 MLX 无需 CUDA：
+适配器文件较大未纳入仓库，需自行训练或联系作者获取。
 
 ```bash
-pip install mlx-lm
+# 命令行多角色推理测试
+python inference/test_roleplay.py --model qwen
 
-# Qwen2.5-7B — 24GB 非常舒适，快速迭代
+# 启动 Web Demo（默认 Qwen 适配器）
+uvicorn inference.server:app --host 0.0.0.0 --port 8000
+# 访问 http://localhost:8000 打开 Demo UI
+
+# 使用 Gemma 适配器
+MODEL_KEY=gemma uvicorn inference.server:app --port 8000
+```
+
+### 从头构建数据集
+
+```bash
+# 1. 爬取 PRTS Wiki 剧情脚本
+python data_pipeline/scraper.py
+
+# 2. 构建三格式数据集（需要 data/raw/character_table.json + handbook_info.json）
+python data_pipeline/dataset_builder.py
+# 输出：data/processed/roleplay_train.jsonl + roleplay_eval.jsonl 等
+```
+
+### 训练
+
+```bash
+# Qwen2.5-7B MLX LoRA（Apple Silicon 24GB）
 python finetune/train_mlx.py --config finetune/config/qwen2_5_mlx.yaml
 
-# Gemma 4 27B-A4B — 本地验证流程，正式结果见方案 B
+# Gemma 4 E4B — 先打 patch
+python patches/apply_mlx_patch.py
 python finetune/train_mlx.py --config finetune/config/gemma4_mlx.yaml
-```
-
-### 方案 B：云端训练（Kaggle A100，出对比实验正式结果）
-
-```bash
-# 在 Kaggle Notebook 中运行（免费 A100 40GB）
-python finetune/train.py --config finetune/config/gemma4_lora.yaml   # Gemma 4 27B-A4B QLoRA
-python finetune/train.py --config finetune/config/qwen2_5_lora.yaml  # Qwen2.5-7B QLoRA
-```
-
-### 评估 & 推理
-
-```bash
-# 对比报告（需要两个模型都训练完）
-python scripts/compare_models.py
-
-# 启动本地推理服务
-python scripts/run_pipeline.py --mode serve
 ```
 
 ---
 
-## 项目关联
+## mlx-lm Gemma4 架构修复
 
-本项目与以下作品共同构成游戏 AI 作品集：
+mlx-lm 0.31.3 将 `num_kv_shared_layers=18` 误解为"最后 18 层复用前序层的 KV 向量"，导致加载 E4B checkpoint 时报错 126 个缺失参数。实际上所有 42 层均有独立权重。
 
-- [Arknights-Gacha-Analysis-System](https://github.com/victorzhong0110/Arknights-Gacha-Analysis-System) — 明日方舟玩家流失预警（XGBoost + SHAP）
-- [gacha-ltv-churn-predictor](https://github.com/victorzhong0110/gacha-ltv-churn-predictor) — 通用 Gacha LTV ML Pipeline
-- [cc-code](https://github.com/victorzhong0110/cc-code) — 本地 AI Agent 编程助手（14 个 LLM Provider）
+```bash
+# 一键修复（幂等，可重复运行）
+python patches/apply_mlx_patch.py
+```
+
+修复内容：
+1. `Attention.__init__`：`has_kv = True`（对所有层）
+2. `Gemma4TextModel.__init__`：移除跨层 KV 复用逻辑
+
+---
+
+## GPT-4o 评估
+
+```bash
+# 生成输出 + 规则评分（无需 API Key）
+python eval/gpt4o_judge.py --no-gpt
+
+# 完整 GPT-4o 评分
+export OPENAI_API_KEY=sk-...
+python eval/gpt4o_judge.py
+
+# 跳过生成，对已有输出重新评分
+python eval/gpt4o_judge.py --skip-generate
+```
+
+评分维度：`world_fidelity`（世界观）/ `char_consistency`（角色一致）/ `fluency`（流畅度）/ `role_break`（破角色检测）
+
+---
+
+## API 接口
+
+### `POST /chat`（非流式）
+
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"character":"凯尔希","message":"请评估本次行动的医疗损耗。","history":[]}'
+```
+
+### `POST /stream`（SSE 流式）
+
+```bash
+curl -N -X POST http://localhost:8000/stream \
+  -H "Content-Type: application/json" \
+  -d '{"character":"能天使","message":"你好，最近有没有遇到难搞的任务？","history":[]}'
+```
+
+### `GET /characters`
+
+```json
+{"characters": ["能天使", "凯尔希", "阿米娅", "陈", "德克萨斯"]}
+```
+
+---
+
+## 已知限制
+
+| 问题 | 原因 | 状态 |
+|------|------|------|
+| Gemma 输出语义破碎 | `max_seq_length=2048` 截断 roleplay 样本（最长 3800t） | 硬件约束，待 A100 验证 |
+| 能天使偶发幻觉地名 | P10：训练数据含非规范化地名标注 | 未修复，系统提示缓解中 |
+| 角色知识截止 | 语料仅覆盖至爬取时的版本 | 定期重建数据集 |
+
+---
+
+## 相关项目
+
+- [Arknights-Gacha-Analysis-System](https://github.com/victorzhong0110/Arknights-Gacha-Analysis-System) — 玩家流失预警（XGBoost + SHAP）
+- [gacha-ltv-churn-predictor](https://github.com/victorzhong0110/gacha-ltv-churn-predictor) — 通用 Gacha LTV Pipeline
 
 ---
 
