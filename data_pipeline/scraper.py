@@ -1,12 +1,9 @@
 """
-Arknights lore data fetcher.
+Arknights story script fetcher.
 Source: Kengxxiao/ArknightsGameData (official game data, public GitHub repo)
-  - character_table.json  → operator basic info
-  - handbook_info_table.json → operator profiles / lore (档案资料)
-  - story_review_table.json → main story chapter list
-  - activity_table.json → event info
 
-No scraping needed — raw GitHub CDN, no anti-bot issues.
+Fetches all story .txt files listed in story_review_table.json.
+Path mapping: storyInfo "info/X/Y" -> "story/X/Y.txt"
 """
 
 import json
@@ -20,17 +17,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 RAW_DIR = Path("./data/raw")
+STORY_DIR = Path("./data/raw/stories")
 RAW_DIR.mkdir(parents=True, exist_ok=True)
+STORY_DIR.mkdir(parents=True, exist_ok=True)
 
 BASE_URL = (
     "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData"
-    "/master/zh_CN/gamedata/excel"
+    "/master/zh_CN/gamedata"
 )
 
 TABLES = {
-    "character_table":   f"{BASE_URL}/character_table.json",
-    "handbook_info":     f"{BASE_URL}/handbook_info_table.json",
-    "story_review":      f"{BASE_URL}/story_review_table.json",
+    "character_table": f"{BASE_URL}/excel/character_table.json",
+    "story_review":    f"{BASE_URL}/excel/story_review_table.json",
 }
 
 
@@ -40,101 +38,132 @@ def fetch_json(url: str, name: str) -> dict:
         logger.info(f"Using cached {name}.json")
         with open(cache, encoding="utf-8") as f:
             return json.load(f)
-
     logger.info(f"Fetching {name} ...")
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     with open(cache, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    logger.info(f"Saved → {cache}")
+    logger.info(f"Saved -> {cache}")
     return data
 
 
-class ArknightsDataFetcher:
-    def __init__(self):
-        self.chars = {}
-        self.handbook = {}
-        self.stories = {}
+def story_info_to_path(story_info: str) -> str:
+    """
+    Convert storyInfo field to actual file path.
+    e.g. "info/activities/a001/level_a001_01_beg"
+      -> "story/activities/a001/level_a001_01_beg.txt"
+    """
+    if story_info.startswith("info/"):
+        story_info = story_info[5:]
+    return f"story/{story_info}.txt"
 
-    def load(self):
-        self.chars    = fetch_json(TABLES["character_table"], "character_table")
-        self.handbook = fetch_json(TABLES["handbook_info"],   "handbook_info")
-        self.stories  = fetch_json(TABLES["story_review"],    "story_review")
+
+def fetch_story(story_info: str, delay: float = 0.05) -> str | None:
+    """Fetch a single story script. Returns raw text or None on failure."""
+    # Use flat cache filename to avoid deep nested dirs
+    safe_name = story_info.replace("/", "_").replace("info_", "") + ".txt"
+    cache = STORY_DIR / safe_name
+
+    if cache.exists():
+        return cache.read_text(encoding="utf-8")
+
+    rel_path = story_info_to_path(story_info)
+    url = f"{BASE_URL}/{rel_path}"
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        text = resp.text
+        cache.write_text(text, encoding="utf-8")
+        time.sleep(delay)
+        return text
+    except Exception as e:
+        logger.warning(f"Failed to fetch {url}: {e}")
+        return None
+
+
+class ArknightsStoryFetcher:
+    def __init__(self):
+        self.story_review: dict = {}
+        self.char_names: set[str] = set()
+
+    def load_metadata(self):
+        self.story_review = fetch_json(TABLES["story_review"], "story_review")
+        char_table = fetch_json(TABLES["character_table"], "character_table")
+        self.char_names = {
+            v["name"] for v in char_table.values()
+            if v.get("name") and v.get("profession") not in ("TOKEN", "TRAP")
+        }
         logger.info(
-            f"Loaded: {len(self.chars)} operators, "
-            f"{len(self.handbook.get('handbookDict', {}))} profiles"
+            f"Loaded: {len(self.story_review)} chapters, "
+            f"{len(self.char_names)} known operator names"
         )
 
-    def build_operator_profiles(self, limit: int = None) -> list[dict]:
-        """
-        Merge character_table + handbook_info into clean operator profiles.
-        Returns list of dicts ready for dataset_builder.
-        """
-        handbook_dict = self.handbook.get("handbookDict", {})
-        profiles = []
+    def collect_story_infos(self) -> list[dict]:
+        """Collect all storyInfo entries from story_review."""
+        entries = []
+        for chapter_id, chapter in self.story_review.items():
+            chapter_name = chapter.get("name", chapter_id)
+            act_type = chapter.get("actType", "")
+            for node in chapter.get("infoUnlockDatas", []):
+                story_info = node.get("storyInfo", "")
+                if not story_info:
+                    continue
+                entries.append({
+                    "chapter_id":   chapter_id,
+                    "chapter_name": chapter_name,
+                    "act_type":     act_type,
+                    "story_id":     node.get("storyId", ""),
+                    "story_name":   node.get("storyName", ""),
+                    "story_info":   story_info,
+                })
+        logger.info(f"Collected {len(entries)} story nodes")
+        return entries
 
-        char_items = list(self.chars.items())
+    def fetch_all(self, limit: int = None, delay: float = 0.05) -> list[dict]:
+        """
+        Fetch all story scripts. Returns list of dicts with metadata + raw text.
+        """
+        entries = self.collect_story_infos()
         if limit:
-            char_items = char_items[:limit]
+            entries = entries[:limit]
 
-        for char_id, char in tqdm(char_items, desc="Building profiles"):
-            # Skip non-operator entries (enemy units, traps, etc.)
-            if not char.get("isNotObtainable") == False and char.get("profession") == "TRAP":
+        results = []
+        failed = 0
+        for entry in tqdm(entries, desc="Fetching story scripts"):
+            text = fetch_story(entry["story_info"], delay=delay)
+            if text is None:
+                failed += 1
                 continue
-            if char.get("profession") in ("TOKEN", "TRAP"):
-                continue
-            name = char.get("name", "")
-            if not name:
-                continue
+            results.append({**entry, "raw_text": text})
 
-            # Get handbook (lore) data
-            hb = handbook_dict.get(char_id, {})
-            story_text_list = hb.get("storyTextAudio", [])
+        logger.info(f"Fetched {len(results)} stories, {failed} failed")
 
-            sections = {}
-            for story in story_text_list:
-                title = story.get("storyTitle", "")
-                text  = story.get("stories", [{}])[0].get("storyText", "") if story.get("stories") else ""
-                if title and text:
-                    sections[title] = text.strip()
+        # Save manifest
+        manifest = [{k: v for k, v in r.items() if k != "raw_text"} for r in results]
+        manifest_path = RAW_DIR / "story_manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved manifest -> {manifest_path}")
 
-            if not sections:
-                continue  # skip operators with no lore yet
-
-            profiles.append({
-                "char_id":    char_id,
-                "name":       name,
-                "rarity":     char.get("rarity", ""),
-                "profession":  char.get("profession", ""),
-                "description": char.get("description", ""),
-                "tagList":    char.get("tagList", []),
-                "sections":   sections,
-            })
-
-        logger.info(f"Built {len(profiles)} operator profiles with lore")
-
-        out = RAW_DIR / "operator_profiles.json"
-        with open(out, "w", encoding="utf-8") as f:
-            json.dump(profiles, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved → {out}")
-        return profiles
+        return results
 
 
-# ── Keep original interface for run_pipeline.py ───────────────────────────────
-
+# Backwards-compatible wrapper
 class PRTSScraper:
-    """Backwards-compatible wrapper — now uses ArknightsGameData instead of PRTS."""
-
-    def __init__(self, delay: float = 0):
-        self.fetcher = ArknightsDataFetcher()
+    def __init__(self, delay: float = 0.05):
+        self.fetcher = ArknightsStoryFetcher()
+        self.delay = delay
 
     def scrape_all(self, limit: int = None):
-        self.fetcher.load()
-        profiles = self.fetcher.build_operator_profiles(limit=limit)
-        logger.info(f"Done. Total profiles: {len(profiles)}")
+        self.fetcher.load_metadata()
+        stories = self.fetcher.fetch_all(limit=limit, delay=self.delay)
+        logger.info(f"Done. Total stories fetched: {len(stories)}")
+        return stories
 
 
 if __name__ == "__main__":
     scraper = PRTSScraper()
-    scraper.scrape_all(limit=20)
+    scraper.scrape_all(limit=50)

@@ -5,23 +5,36 @@ model:
   model_family: "qwen"
 
 lora:
-  rank: 16
-  scale: 32.0          # equivalent to lora_alpha
+  rank: 8               # reduced from 16 to save optimizer memory
+  scale: 16.0
   dropout: 0.05
 
 training:
   output_dir: "./checkpoints/qwen2_5_mlx"
-  iters: 1000
-  batch_size: 4
-  learning_rate: 2.0e-4
-  lr_schedule: "cosine_decay"
-  warmup: 50
-  val_batches: 25
-  save_every: 100
+  batch_size: 1
+  learning_rate: 5.0e-5
+  # lr_schedule: cosine decay, arguments are [initial_lr, decay_steps, alpha].
+  # decay_steps is overridden per-format in train_mlx.py to match iters_per_format.
+  # Plain string format (e.g. "cosine_decay") is NOT supported by this mlx-lm version.
+  lr_schedule:
+    name: cosine_decay
+    warmup: 100
+    arguments: [5.0e-5, 3000, 0]
+  warmup: 100
+  val_batches: 10
+  save_every: 200
   adapter_file: "adapters.safetensors"
-  max_seq_length: 2048
-  grad_checkpoint: false   # not needed at 7B with 24GB
+  max_seq_length: 4096
+  grad_checkpoint: true
+  grad_clip: 0.5             # P8 fix: reduced from 1.0 — tighter clipping for long-seq stability
+  # Per-format iters (used by --format all)
+  iters_per_format:
+    narrative:       1000   # ~6k samples
+    dialogue_window: 3000   # ~288k samples
+    roleplay:        1500   # P7 fix: best val loss at iter 1200; 1500 gives headroom without overfitting
+    combined:        3000   # fallback
 
 data:
   train_file: "./data/processed/train.jsonl"
   eval_file: "./data/processed/eval.jsonl"
+  system_prompt: "你是明日方舟（Arknights）世界中的内容创作助手，精通泰拉大陆的历史、干员档案与源石技艺体系。请根据设定生成符合世界观的内容。"
