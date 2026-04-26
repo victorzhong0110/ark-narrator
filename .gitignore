@@ -10,11 +10,13 @@ venv/
 # Data & Models (too large for git)
 data/raw/
 data/processed/
+data/mlx_format*/
 outputs/
 checkpoints/
 *.bin
 *.safetensors
 *.gguf
+*.zip
 
 # Secrets
 .env

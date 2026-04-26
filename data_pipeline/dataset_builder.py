@@ -43,6 +43,19 @@ MAX_RP_TOKENS  = 3800  # leave headroom below 4096
 TAG_RE  = re.compile(r"\[.*?\]")
 NAME_RE = re.compile(r'^\[name="(.+?)"\]\s*(.*)')
 
+# P9 fix: filter samples whose assistant content contains noise tokens —
+# consecutive uppercase ASCII sequences ≥5 chars that aren't known abbreviations.
+# "IALIZER", "iaiscommands" etc. are scraper artefacts that corrupt outputs.
+_KNOWN_ABBREVS = {"PRTS", "ID", "HP", "ATK", "DEF", "RES", "AI", "NPC", "OK"}
+_NOISE_RE = re.compile(r'\b[A-Z]{5,}\b')
+
+def _has_noise_token(text: str) -> bool:
+    """Return True if text contains a suspicious all-caps token (scraper artefact)."""
+    for tok in _NOISE_RE.findall(text):
+        if tok not in _KNOWN_ABBREVS:
+            return True
+    return False
+
 NARRATIVE_SYSTEM = (
     "你是明日方舟（Arknights）的叙事生成助手，"
     "精通泰拉大陆的世界观与干员性格。"
@@ -255,10 +268,13 @@ def build_roleplay_samples(
             continue
 
         # P6 fix: discard samples that are too long for max_seq_length.
-        # CJK chars tokenise to ~1.5 tokens each (conservative upper bound).
-        # Keeping these caused NaN gradient explosions during training.
         estimated_tokens = int(sum(len(m["content"]) for m in messages) * 1.5)
         if estimated_tokens > MAX_RP_TOKENS:
+            continue
+
+        # P9 fix: discard samples containing scraper-artefact noise tokens
+        # (consecutive uppercase strings like "IALIZER", "iaiscommands").
+        if any(_has_noise_token(m["content"]) for m in messages if m["role"] == "assistant"):
             continue
 
         samples.append({
