@@ -1,0 +1,58 @@
+# MLX LoRA fine-tuning — Qwen3.5-9B vs Gemma 4 E4B 公平对比实验
+#
+# 对比设计：
+#   Qwen3.5-9B (9B dense, 2025)  vs  Gemma 4 E4B (4B active MoE, 2025)
+#   同代模型，同 max_seq_length=4096，同 LoRA 配置，同 iters
+#   Gemma 总参数 > 4B（MoE 专家权重），9B dense ≈ 合理对等
+#
+# 内存估算（24GB unified memory）：
+#   Qwen3.5-9B 4-bit 权重 ≈ 4.5GB
+#   LoRA rank 8 × 8 layers 优化器状态 ≈ 0.5GB
+#   seq_len=4096 激活值 ≈ 5-6GB
+#   峰值估计 ≈ 10-12GB  →  24GB 充裕
+#
+# Qwen3 注意事项：
+#   Qwen3 支持 thinking/non-thinking 双模式。
+#   roleplay 训练使用 non-thinking 模式（chat template 自动处理，
+#   训练数据无 <think> token，模型自然收敛到 non-thinking 输出）。
+#
+# Usage:
+#   python finetune/train_mlx.py \
+#       --config finetune/config/qwen3_5_mlx.yaml \
+#       --format roleplay
+
+model:
+  base_model: "mlx-community/Qwen3.5-9B-MLX-4bit"
+  model_family: "qwen"
+
+lora:
+  rank: 8
+  scale: 16.0
+  dropout: 0.05
+  num_layers: 8           # 9B 约 36 层，8 层 LoRA ≈ 22% 覆盖率（与 Gemma 一致）
+
+training:
+  output_dir: "./checkpoints/qwen3_5_mlx_roleplay"
+  batch_size: 1
+  learning_rate: 2.0e-5          # 与 Gemma 对比实验保持一致
+  lr_schedule:
+    name: cosine_decay
+    warmup: 100
+    arguments: [2.0e-5, 1500, 0]
+  warmup: 100
+  val_batches: 5
+  save_every: 200
+  adapter_file: "adapters.safetensors"
+  max_seq_length: 4096           # 与 Gemma R2 一致，完整训练信号
+  grad_checkpoint: true
+  grad_clip: 0.5
+  iters_per_format:
+    narrative:       1000
+    dialogue_window: 3000
+    roleplay:        1500
+    combined:        3000
+
+data:
+  train_file: "./data/processed/train.jsonl"
+  eval_file:  "./data/processed/eval.jsonl"
+  system_prompt: "你是明日方舟（Arknights）世界中的内容创作助手，精通泰拉大陆的历史、干员档案与源石技艺体系。请根据设定生成符合世界观的内容。"

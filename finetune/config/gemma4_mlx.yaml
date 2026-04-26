@@ -1,11 +1,15 @@
-# MLX LoRA fine-tuning for Gemma 4 4B (dense)
-# 4-bit quantized: ~2GB base, easily fits 24GB unified memory.
-# Peak training memory estimate: ~8-10GB (comfortable headroom vs Qwen's ~11GB).
+# MLX LoRA fine-tuning — Gemma 4 E4B (公平对比第二轮)
 #
-# NOTE: Gemma 4 26B-A4B was tried first but OOM'd at backward pass — 15.6GB weights
-#       leave no room for gradients + optimizer state on 24GB. See Obsidian notes.
+# 第一轮问题：max_seq_length=2048 截断 roleplay 样本（最长 ~3800 tokens），
+# 导致训练信号严重损失，输出语义破碎（val loss 3.987）。
 #
-# Confirm model name at: https://huggingface.co/mlx-community (search: gemma-4-4b)
+# 第二轮修正：max_seq_length 升至 4096，与 Qwen3.5-9B 完全对等。
+# E4B 架构优势：42 层中 35 层为滑动窗口注意力（O(n)），
+# 仅 7 层全局注意力（O(n²)），seq_len 翻倍内存增长温和。
+# 峰值估计 ≈ 14-16GB，24GB 应可容纳（grad_checkpoint=true）。
+#
+# 对比实验配置（与 qwen3_5_mlx.yaml 保持一致）：
+#   max_seq_length=4096 / lr=2e-5 / rank=8 / num_layers=8 / iters=1500
 #
 # Usage:
 #   python finetune/train_mlx.py \
@@ -20,12 +24,12 @@ lora:
   rank: 8               # same as Qwen — 4B model has plenty of headroom
   scale: 16.0
   dropout: 0.05
-  num_layers: 8         # 4B has ~18 layers; 8 ≈ 44% coverage
+  num_layers: 8         # 42 层中 8 层 LoRA ≈ 19% 覆盖率（与 Qwen3.5-9B 一致）
 
 training:
-  output_dir: "./checkpoints/gemma4_mlx"
+  output_dir: "./checkpoints/gemma4_mlx_r2_roleplay"
   batch_size: 1
-  learning_rate: 2.0e-5          # slightly lower than Qwen (5e-5) for fair comparison
+  learning_rate: 2.0e-5          # 与 Qwen3.5-9B 对比实验保持一致
   lr_schedule:
     name: cosine_decay
     warmup: 100
@@ -34,7 +38,7 @@ training:
   val_batches: 5
   save_every: 200
   adapter_file: "adapters.safetensors"
-  max_seq_length: 2048           # 4096 OOMs on backward pass with all-42-layer K/V; 2048 fits 24GB
+  max_seq_length: 4096           # R2 修正：35层滑动窗口使内存增长温和，估计峰值14-16GB可容纳
   grad_checkpoint: true
   grad_clip: 0.5
   iters_per_format:
