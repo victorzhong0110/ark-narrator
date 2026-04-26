@@ -38,7 +38,7 @@ training:
   val_batches: 5
   save_every: 200
   adapter_file: "adapters.safetensors"
-  max_seq_length: 4096           # R2 修正：35层滑动窗口使内存增长温和，估计峰值14-16GB可容纳
+  max_seq_length: 4096           # 与Qwen3.5-4B对齐（两模型均~2GB权重，24GB充裕）
   grad_checkpoint: true
   grad_clip: 0.5
   iters_per_format:

@@ -1,14 +1,16 @@
-# MLX LoRA fine-tuning — Qwen3.5-9B vs Gemma 4 E4B 公平对比实验
+# MLX LoRA fine-tuning — Qwen3.5-4B vs Gemma 4 E4B 公平对比实验
 #
 # 对比设计：
-#   Qwen3.5-9B (9B dense, 2025)  vs  Gemma 4 E4B (4B active MoE, 2025)
-#   同代模型，同 max_seq_length=4096，同 LoRA 配置，同 iters
-#   Gemma 总参数 > 4B（MoE 专家权重），9B dense ≈ 合理对等
+#   Qwen3.5-4B (4B dense, 2025)  vs  Gemma 4 E4B (4B active MoE, 2025)
+#   同代、同参数量级、同 max_seq_length=4096、同 LoRA 配置、同 iters
+#
+# 模型选择过程：
+#   先尝试 Qwen3.5-9B → 4096 和 3072 均 OOM（9B hidden_dim 更宽，反向传播峰值超 24GB）
+#   回退到 4B：与 Gemma E4B 参数量直接对等，本地训练最公平方案
 #
 # 内存估算（24GB unified memory）：
-#   Qwen3.5-9B 4-bit 权重 ≈ 4.5GB
-#   LoRA rank 8 × 8 layers 优化器状态 ≈ 0.5GB
-#   seq_len=4096 激活值 ≈ 5-6GB
+#   Qwen3.5-4B 4-bit 权重 ≈ 2GB
+#   seq_len=4096 激活值估计 ≈ 6-8GB
 #   峰值估计 ≈ 10-12GB  →  24GB 充裕
 #
 # Qwen3 注意事项：
@@ -22,7 +24,7 @@
 #       --format roleplay
 
 model:
-  base_model: "mlx-community/Qwen3.5-9B-MLX-4bit"
+  base_model: "mlx-community/Qwen3.5-4B-MLX-4bit"
   model_family: "qwen"
 
 lora:
@@ -43,7 +45,7 @@ training:
   val_batches: 5
   save_every: 200
   adapter_file: "adapters.safetensors"
-  max_seq_length: 4096           # 与 Gemma R2 一致，完整训练信号
+  max_seq_length: 4096           # 4B权重~2GB，24GB充裕
   grad_checkpoint: true
   grad_clip: 0.5
   iters_per_format:
