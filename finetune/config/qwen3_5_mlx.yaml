@@ -1,17 +1,18 @@
-# MLX LoRA fine-tuning — Qwen3.5-4B vs Gemma 4 E4B 公平对比实验
+# MLX LoRA fine-tuning — Qwen3-8B vs Gemma 4 E4B 公平对比实验
 #
 # 对比设计：
-#   Qwen3.5-4B (4B dense, 2025)  vs  Gemma 4 E4B (4B active MoE, 2025)
-#   同代、同参数量级、同 max_seq_length=4096、同 LoRA 配置、同 iters
+#   Qwen3-8B (8B dense Transformer, 2025)  vs  Gemma 4 E4B (4B active MoE, 2025)
+#   同代（均 2025），同 max_seq_length=4096，同 LoRA 配置，同 iters
 #
-# 模型选择过程：
-#   先尝试 Qwen3.5-9B → 4096 和 3072 均 OOM（9B hidden_dim 更宽，反向传播峰值超 24GB）
-#   回退到 4B：与 Gemma E4B 参数量直接对等，本地训练最公平方案
+# 模型选择过程（记录排查路径）：
+#   Qwen3.5-9B → 4096/3072 均 OOM（9B hidden_dim 过宽，backward 峰值超 24GB）
+#   Qwen3.5-4B → OOM（Qwen3.5 是 SSM+Transformer 混合架构，mlx-lm 0.31.3 训练不支持）
+#   Qwen3-8B   → 纯 Transformer，mlx-lm 兼容，4-bit 权重 ~4GB，预计可行
 #
 # 内存估算（24GB unified memory）：
-#   Qwen3.5-4B 4-bit 权重 ≈ 2GB
+#   Qwen3-8B 4-bit 权重 ≈ 4GB（标准 Transformer，同 Qwen2.5-7B 体量）
 #   seq_len=4096 激活值估计 ≈ 6-8GB
-#   峰值估计 ≈ 10-12GB  →  24GB 充裕
+#   峰值估计 ≈ 11-13GB  →  24GB 应可容纳
 #
 # Qwen3 注意事项：
 #   Qwen3 支持 thinking/non-thinking 双模式。
@@ -24,7 +25,7 @@
 #       --format roleplay
 
 model:
-  base_model: "mlx-community/Qwen3.5-4B-MLX-4bit"
+  base_model: "mlx-community/Qwen3-8B-4bit"
   model_family: "qwen"
 
 lora:

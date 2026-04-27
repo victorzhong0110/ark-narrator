@@ -1,6 +1,9 @@
 """
 ArkNarrator evaluation — DeepSeek V4 Pro judge + optional human evaluation.
 
+Compares Qwen2.5-7B (4th round LoRA) vs Qwen3-8B (1st round LoRA) on same
+roleplay dataset — same generation, different model family.
+
 Evaluation dimensions
 ---------------------
 1. Attribution accuracy  — judge sees output only (no char name), picks from 3 cards.
@@ -10,11 +13,14 @@ Evaluation dimensions
 2. Contradiction rate    — judge sees output + character card, flags factual/personality
                            contradictions. Binary yes/no, with explanation if yes.
 
-3. Pairwise win rate     — same prompt, Qwen vs Gemma outputs shown as A/B (randomized),
+3. Pairwise win rate     — same prompt, Qwen2.5 vs Qwen3 outputs shown as A/B (randomized),
                            judge picks which better fits the character card.
 
 4. Human evaluation      — interactive mode: same A/B pairs printed to terminal,
                            user inputs A / B / T (tie).
+
+Note on Qwen3 outputs: Qwen3 may emit <think>...</think> blocks in reasoning mode.
+These are stripped before evaluation so the judge only sees the final response.
 
 Usage
 -----
@@ -94,17 +100,31 @@ MODEL_CONFIGS = {
     "qwen": {
         "model_path":  "mlx-community/Qwen2.5-7B-Instruct-4bit",
         "adapter_dir": "checkpoints/qwen2_5_mlx_roleplay",
-        "label":       "Qwen2.5-7B (val loss 2.156)",
+        "label":       "Qwen2.5-7B R4 (val loss 2.156)",
+        "strip_think": False,
     },
-    "gemma": {
-        "model_path":  "mlx-community/gemma-4-E4B-it-4bit",
-        "adapter_dir": "checkpoints/gemma4_mlx_roleplay",
-        "label":       "Gemma 4 E4B (val loss 3.987)",
+    "qwen3": {
+        "model_path":  "mlx-community/Qwen3-8B-4bit",
+        "adapter_dir": "checkpoints/qwen3_5_mlx_roleplay_roleplay",
+        "label":       "Qwen3-8B R1 (val loss 2.345)",
+        "strip_think": True,   # strip <think>...</think> before judging
     },
 }
 
 # ---------------------------------------------------------------------------
-# Inference (unchanged from gpt4o_judge.py)
+# Helpers
+# ---------------------------------------------------------------------------
+
+import re as _re
+_THINK_RE = _re.compile(r"<think>.*?</think>", _re.DOTALL)
+
+def strip_think(text: str) -> str:
+    """Remove Qwen3 reasoning blocks before evaluation."""
+    return _THINK_RE.sub("", text).strip()
+
+
+# ---------------------------------------------------------------------------
+# Inference
 # ---------------------------------------------------------------------------
 
 def generate_outputs(model_key: str) -> list[dict]:
@@ -135,6 +155,8 @@ def generate_outputs(model_key: str) -> list[dict]:
         except Exception:
             output = generate(model, tokenizer, prompt=prompt, max_tokens=300,
                               verbose=False, temperature=0.8)
+        if cfg.get("strip_think"):
+            output = strip_think(output)
         results.append({
             "model": model_key, "character": char,
             "prompt_id": pid, "user": user_text, "output": output,
@@ -249,24 +271,24 @@ def run_contradiction(outputs: list[dict], client) -> list[dict]:
     return results
 
 
-def run_pairwise(qwen_outputs: list[dict], gemma_outputs: list[dict],
+def run_pairwise(qwen_outputs: list[dict], qwen3_outputs: list[dict],
                  client) -> list[dict]:
     """Side-by-side comparison for each prompt; A/B order randomized."""
     pairs = []
     qwen_by_pid  = {s["prompt_id"]: s for s in qwen_outputs}
-    gemma_by_pid = {s["prompt_id"]: s for s in gemma_outputs}
+    qwen3_by_pid = {s["prompt_id"]: s for s in qwen3_outputs}
 
     for char, pid, user_text in TEST_PROMPTS:
-        q = qwen_by_pid.get(pid)
-        g = gemma_by_pid.get(pid)
-        if not q or not g:
+        q  = qwen_by_pid.get(pid)
+        q3 = qwen3_by_pid.get(pid)
+        if not q or not q3:
             continue
 
         # Randomize A/B assignment
         flip = random.random() < 0.5
-        output_A = g["output"] if flip else q["output"]
-        output_B = q["output"] if flip else g["output"]
-        a_is_gemma = flip
+        output_A = q3["output"] if flip else q["output"]
+        output_B = q["output"]  if flip else q3["output"]
+        a_is_qwen3 = flip
 
         card = CHARACTER_CARDS.get(char, "")
         prompt = PAIRWISE_PROMPT.format(
@@ -278,16 +300,16 @@ def run_pairwise(qwen_outputs: list[dict], gemma_outputs: list[dict],
 
         # Map back to model names
         if letter == "A":
-            winner = "gemma" if a_is_gemma else "qwen"
+            winner = "qwen3" if a_is_qwen3 else "qwen"
         elif letter == "B":
-            winner = "qwen" if a_is_gemma else "gemma"
+            winner = "qwen"  if a_is_qwen3 else "qwen3"
         else:
             winner = "tie"
 
         pairs.append({
             "prompt_id": pid, "character": char, "user": user_text,
-            "output_qwen": q["output"], "output_gemma": g["output"],
-            "a_is_gemma": a_is_gemma,
+            "output_qwen": q["output"], "output_qwen3": q3["output"],
+            "a_is_qwen3": a_is_qwen3,
             "ds_answer": letter, "ds_winner": winner,
         })
         logger.info(f"  Pairwise [{pid}] DS winner: {winner}")
@@ -313,21 +335,21 @@ def run_human_pairwise(pairs: list[dict]) -> list[dict]:
         print(f"用户：{pair['user']}\n")
         print(SEP)
 
-        # Always show Qwen as left, Gemma as right for human
-        print("【左 — Qwen2.5-7B】")
+        # Always show Qwen2.5 as left, Qwen3 as right for human
+        print("【左 — Qwen2.5-7B R4】")
         print(pair["output_qwen"])
         print(SEP)
-        print("【右 — Gemma 4 E4B】")
-        print(pair["output_gemma"])
+        print("【右 — Qwen3-8B R1】")
+        print(pair["output_qwen3"])
         print(SEP)
 
         while True:
-            raw = input("你的判断 (A=左Qwen / B=右Gemma / T=平局): ").strip().upper()
+            raw = input("你的判断 (A=左Qwen2.5 / B=右Qwen3 / T=平局): ").strip().upper()
             if raw in ("A", "B", "T"):
                 break
             print("请输入 A、B 或 T")
 
-        human_winner = {"A": "qwen", "B": "gemma", "T": "tie"}[raw]
+        human_winner = {"A": "qwen", "B": "qwen3", "T": "tie"}[raw]
         updated.append({**pair, "human_answer": raw, "human_winner": human_winner})
         print(f"  → 记录：{human_winner}\n")
 
@@ -364,8 +386,8 @@ def build_report(
         contr_by_model[s["model"]].append(not s["contradiction"])  # pass = no contradiction
 
     # Pairwise
-    ds_wins = {"qwen": 0, "gemma": 0, "tie": 0}
-    hu_wins = {"qwen": 0, "gemma": 0, "tie": 0}
+    ds_wins = {"qwen": 0, "qwen3": 0, "tie": 0}
+    hu_wins = {"qwen": 0, "qwen3": 0, "tie": 0}
     for p in pairs:
         ds_wins[p["ds_winner"]] += 1
         if include_human and "human_winner" in p:
@@ -378,8 +400,8 @@ def build_report(
         sep    += "--------------|"
     lines += [header, sep]
 
-    for model_key, label in [("qwen", MODEL_CONFIGS["qwen"]["label"]),
-                               ("gemma", MODEL_CONFIGS["gemma"]["label"])]:
+    for model_key, label in [("qwen",  MODEL_CONFIGS["qwen"]["label"]),
+                               ("qwen3", MODEL_CONFIGS["qwen3"]["label"])]:
         n = len(attr_by_model[model_key]) or 1
         attr_str  = f"{sum(attr_by_model[model_key])}/{n}"
         contr_str = f"{sum(contr_by_model[model_key])}/{n}"
@@ -395,39 +417,39 @@ def build_report(
 
     # --- Attribution detail ---
     lines.append("\n## 归因测试详情\n")
-    lines.append("| Prompt | 角色 | Qwen 预测 | Qwen ✓ | Gemma 预测 | Gemma ✓ |")
-    lines.append("|--------|------|----------|--------|-----------|--------|")
-    attr_q = {s["prompt_id"]: s for s in attribution if s["model"] == "qwen"}
-    attr_g = {s["prompt_id"]: s for s in attribution if s["model"] == "gemma"}
+    lines.append("| Prompt | 角色 | Qwen2.5 预测 | Qwen2.5 ✓ | Qwen3 预测 | Qwen3 ✓ |")
+    lines.append("|--------|------|------------|----------|-----------|--------|")
+    attr_q  = {s["prompt_id"]: s for s in attribution if s["model"] == "qwen"}
+    attr_q3 = {s["prompt_id"]: s for s in attribution if s["model"] == "qwen3"}
     for char, pid, _ in TEST_PROMPTS:
-        q = attr_q.get(pid, {})
-        g = attr_g.get(pid, {})
+        q  = attr_q.get(pid, {})
+        q3 = attr_q3.get(pid, {})
         lines.append(
             f"| {pid} | {char} "
             f"| {q.get('attr_predicted','?')} | {'✓' if q.get('attr_correct') else '✗'} "
-            f"| {g.get('attr_predicted','?')} | {'✓' if g.get('attr_correct') else '✗'} |"
+            f"| {q3.get('attr_predicted','?')} | {'✓' if q3.get('attr_correct') else '✗'} |"
         )
 
     # --- Contradiction detail ---
     lines.append("\n## 矛盾检测详情\n")
-    contr_q = {s["prompt_id"]: s for s in contradiction if s["model"] == "qwen"}
-    contr_g = {s["prompt_id"]: s for s in contradiction if s["model"] == "gemma"}
+    contr_q  = {s["prompt_id"]: s for s in contradiction if s["model"] == "qwen"}
+    contr_q3 = {s["prompt_id"]: s for s in contradiction if s["model"] == "qwen3"}
     for char, pid, _ in TEST_PROMPTS:
-        q = contr_q.get(pid, {})
-        g = contr_g.get(pid, {})
-        q_flag = "⚠ " + q.get("contradiction_detail","") if q.get("contradiction") else "✓ 无矛盾"
-        g_flag = "⚠ " + g.get("contradiction_detail","") if g.get("contradiction") else "✓ 无矛盾"
+        q  = contr_q.get(pid, {})
+        q3 = contr_q3.get(pid, {})
+        q_flag  = "⚠ " + q.get("contradiction_detail","")  if q.get("contradiction")  else "✓ 无矛盾"
+        q3_flag = "⚠ " + q3.get("contradiction_detail","") if q3.get("contradiction") else "✓ 无矛盾"
         lines.append(f"**[{pid}] {char}**")
-        lines.append(f"- Qwen: {q_flag}")
-        lines.append(f"- Gemma: {g_flag}")
+        lines.append(f"- Qwen2.5-7B: {q_flag}")
+        lines.append(f"- Qwen3-8B:   {q3_flag}")
         lines.append("")
 
     # --- Pairwise detail ---
     lines.append("## Pairwise 对比详情\n")
     for p in pairs:
         lines.append(f"### [{p['prompt_id']}] {p['character']} — {p['user']}\n")
-        lines.append(f"**Qwen2.5-7B**\n> {p['output_qwen']}\n")
-        lines.append(f"**Gemma 4 E4B**\n> {p['output_gemma']}\n")
+        lines.append(f"**Qwen2.5-7B R4**\n> {p['output_qwen']}\n")
+        lines.append(f"**Qwen3-8B R1**\n> {p['output_qwen3']}\n")
         ds_str = f"DS判断：{p['ds_winner']}"
         hu_str = f"  人工判断：{p.get('human_winner','—')}" if include_human else ""
         lines.append(f"_{ds_str}{hu_str}_\n")
@@ -442,8 +464,8 @@ def build_report(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-generate", action="store_true")
-    parser.add_argument("--models", nargs="+", default=["qwen", "gemma"],
-                        choices=["qwen", "gemma"])
+    parser.add_argument("--models", nargs="+", default=["qwen", "qwen3"],
+                        choices=["qwen", "qwen3"])
     parser.add_argument("--no-ds",    action="store_true", help="Skip DeepSeek judging")
     parser.add_argument("--human",    action="store_true", help="Interactive human pairwise eval")
     args = parser.parse_args()
@@ -489,26 +511,26 @@ def main():
 
         logger.info("Running pairwise comparison…")
         qwen_out  = [s for s in all_outputs if s["model"] == "qwen"]
-        gemma_out = [s for s in all_outputs if s["model"] == "gemma"]
-        if qwen_out and gemma_out:
-            pairs = run_pairwise(qwen_out, gemma_out, client)
+        qwen3_out = [s for s in all_outputs if s["model"] == "qwen3"]
+        if qwen_out and qwen3_out:
+            pairs = run_pairwise(qwen_out, qwen3_out, client)
 
     # 3. Human evaluation
     if args.human:
         if not pairs:
             # Build pairs without DS scores for human-only mode
-            qwen_out  = [s for s in all_outputs if s["model"] == "qwen"]
-            gemma_out = [s for s in all_outputs if s["model"] == "gemma"]
+            qwen_out   = [s for s in all_outputs if s["model"] == "qwen"]
+            qwen3_out  = [s for s in all_outputs if s["model"] == "qwen3"]
             qwen_by_pid  = {s["prompt_id"]: s for s in qwen_out}
-            gemma_by_pid = {s["prompt_id"]: s for s in gemma_out}
+            qwen3_by_pid = {s["prompt_id"]: s for s in qwen3_out}
             for char, pid, user_text in TEST_PROMPTS:
-                q = qwen_by_pid.get(pid)
-                g = gemma_by_pid.get(pid)
-                if q and g:
+                q  = qwen_by_pid.get(pid)
+                q3 = qwen3_by_pid.get(pid)
+                if q and q3:
                     pairs.append({
                         "prompt_id": pid, "character": char, "user": user_text,
-                        "output_qwen": q["output"], "output_gemma": g["output"],
-                        "a_is_gemma": False, "ds_answer": "?", "ds_winner": "?",
+                        "output_qwen": q["output"], "output_qwen3": q3["output"],
+                        "a_is_qwen3": False, "ds_answer": "?", "ds_winner": "?",
                     })
         pairs = run_human_pairwise(pairs)
 
