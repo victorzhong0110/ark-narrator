@@ -107,7 +107,20 @@ MODEL_CONFIGS = {
         "model_path":  "mlx-community/Qwen3-8B-4bit",
         "adapter_dir": "checkpoints/qwen3_5_mlx_roleplay_roleplay",
         "label":       "Qwen3-8B R1 (val loss 2.345)",
-        "strip_think": True,   # strip <think>...</think> before judging
+        "strip_think": True,
+    },
+    "qwen3_base": {
+        "model_path":  "mlx-community/Qwen3-8B-4bit",
+        "adapter_dir": None,
+        "label":       "Qwen3-8B base (no LoRA)",
+        "strip_think": True,
+    },
+    "qwen3_rag": {
+        "model_path":  "mlx-community/Qwen3-8B-4bit",
+        "adapter_dir": None,
+        "label":       "Qwen3-8B base + memory RAG",
+        "strip_think": True,
+        "memory_bank": "eval/results/memory_bank.json",  # built by build_memory.py
     },
 }
 
@@ -132,17 +145,39 @@ def generate_outputs(model_key: str) -> list[dict]:
 
     cfg = MODEL_CONFIGS[model_key]
     adapter_dir = cfg["adapter_dir"]
-    if not Path(adapter_dir).exists():
+    if adapter_dir and not Path(adapter_dir).exists():
         logger.warning(f"Adapter not found: {adapter_dir} — skipping {model_key}")
         return []
 
-    logger.info(f"Loading {model_key}: {cfg['model_path']} + {adapter_dir}")
-    model, tokenizer = load(cfg["model_path"], adapter_path=adapter_dir)
+    if adapter_dir:
+        logger.info(f"Loading {model_key}: {cfg['model_path']} + {adapter_dir}")
+        model, tokenizer = load(cfg["model_path"], adapter_path=adapter_dir)
+    else:
+        logger.info(f"Loading {model_key}: {cfg['model_path']} (base, no adapter)")
+        model, tokenizer = load(cfg["model_path"])
+
+    # Load memory bank if configured
+    memory_bank: dict = {}
+    if cfg.get("memory_bank"):
+        bank_path = Path(cfg["memory_bank"])
+        if bank_path.exists():
+            memory_bank = json.loads(bank_path.read_text(encoding="utf-8"))
+            logger.info(f"  Loaded memory bank: {bank_path}")
+        else:
+            logger.warning(f"  Memory bank not found: {bank_path} — run build_memory.py first")
 
     results = []
     for char, pid, user_text in TEST_PROMPTS:
+        system_content = CHARACTER_CARDS[char]
+        if memory_bank.get(char):
+            memories = memory_bank[char]
+            mem_block = "\n".join(f"- {m}" for m in memories)
+            system_content += (
+                f"\n\n以下是你之前作为{char}说过的一些话，"
+                f"请参考你的说话风格和语气，保持一致：\n{mem_block}"
+            )
         messages = [
-            {"role": "system",  "content": CHARACTER_CARDS[char]},
+            {"role": "system",  "content": system_content},
             {"role": "user",    "content": user_text},
         ]
         prompt = tokenizer.apply_chat_template(
@@ -465,7 +500,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-generate", action="store_true")
     parser.add_argument("--models", nargs="+", default=["qwen", "qwen3"],
-                        choices=["qwen", "qwen3"])
+                        choices=["qwen", "qwen3", "qwen3_base", "qwen3_rag"])
     parser.add_argument("--no-ds",    action="store_true", help="Skip DeepSeek judging")
     parser.add_argument("--human",    action="store_true", help="Interactive human pairwise eval")
     args = parser.parse_args()
