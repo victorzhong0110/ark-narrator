@@ -78,11 +78,21 @@ class Settings:
     cloud_audit_enabled: bool = field(
         default_factory=lambda: _env_bool("ARK_CLOUD_AUDIT", False)
     )
+    # provider: mock（无凭证可跑，dev/CI）| http（POST 到你的审核网关）| aliyun | tencent
     cloud_audit_provider: str = field(
-        default_factory=lambda: os.getenv("ARK_CLOUD_AUDIT_PROVIDER", "aliyun")
+        default_factory=lambda: os.getenv("ARK_CLOUD_AUDIT_PROVIDER", "mock")
     )
-    # 云端审核不可用时是否放行（fail-open）。安全产品默认 fail-closed=False→放行本地结果，
-    # 但对最高敏感类别仍由本地规则兜底。可按合规要求改为 True（云端挂掉就拦）。
+    cloud_audit_timeout: float = field(
+        default_factory=lambda: _env_float("ARK_CLOUD_AUDIT_TIMEOUT", 2.0)
+    )
+    cloud_audit_retries: int = field(
+        default_factory=lambda: _env_int("ARK_CLOUD_AUDIT_RETRIES", 1)
+    )
+    cloud_audit_cache_ttl: float = field(
+        default_factory=lambda: _env_float("ARK_CLOUD_AUDIT_CACHE_TTL", 300.0)
+    )
+    # 云端审核不可用时是否拦截（fail-closed）。默认 False→放行本地结果（本地规则仍兜底）；
+    # 按合规要求可改 True（云端挂掉就拦，宁可错杀）。
     cloud_audit_fail_closed: bool = field(
         default_factory=lambda: _env_bool("ARK_CLOUD_AUDIT_FAIL_CLOSED", False)
     )
