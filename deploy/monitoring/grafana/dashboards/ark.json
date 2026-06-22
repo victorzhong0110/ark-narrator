@@ -1,0 +1,62 @@
+{
+  "uid": "ark-overview",
+  "title": "ArkNarrator 概览",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {"from": "now-15m", "to": "now"},
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "请求速率（按状态）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "expr": "sum(rate(ark_requests_total[1m])) by (status)", "legendFormat": "{{status}}"}]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "延迟分位 (s)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+         "expr": "histogram_quantile(0.5, sum(rate(ark_request_seconds_bucket[5m])) by (le))", "legendFormat": "p50"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"},
+         "expr": "histogram_quantile(0.95, sum(rate(ark_request_seconds_bucket[5m])) by (le))", "legendFormat": "p95"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"},
+         "expr": "histogram_quantile(0.99, sum(rate(ark_request_seconds_bucket[5m])) by (le))", "legendFormat": "p99"}
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "护栏拦截（按类别）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "expr": "sum(rate(ark_blocked_total[5m])) by (category)", "legendFormat": "{{category}}"}]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "异常：过载/超时/鉴权/存储",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(ark_overloaded_total[5m]))", "legendFormat": "429过载"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(ark_timeout_total[5m]))", "legendFormat": "504超时"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(ark_auth_fail_total[5m]))", "legendFormat": "401鉴权失败"},
+        {"refId": "D", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(ark_store_errors_total[5m]))", "legendFormat": "存储降级"}
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "各实例请求速率（LB 分散）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "expr": "sum(rate(ark_requests_total[1m])) by (instance)", "legendFormat": "{{instance}}"}]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "语气档位分布",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "expr": "sum(rate(ark_register_total[5m])) by (register)", "legendFormat": "{{register}}"}]
+    }
+  ]
+}

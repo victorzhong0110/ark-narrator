@@ -45,6 +45,8 @@ _INSTANCE = os.getenv("HOSTNAME") or socket.gethostname()   # 容器内每实例
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global orchestrator, _ready
+    from app.tracing import setup_tracing
+    setup_tracing(app)                 # 配了 ARK_OTEL_ENDPOINT 才生效，否则 no-op
     orchestrator = build_orchestrator(settings)
     _ready = True
     yield

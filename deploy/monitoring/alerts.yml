@@ -1,0 +1,41 @@
+groups:
+  - name: ark-narrator
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(ark_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(ark_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "5xx 错误率 >5%（持续5分钟）"
+
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(ark_request_seconds_bucket[5m])) by (le)) > 1.0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 延迟 >1s（持续10分钟）—— SLO 风险"
+
+      - alert: StoreErrors
+        expr: sum(rate(ark_store_errors_total[5m])) > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "存储(Redis)出现降级错误 —— 检查 Redis 健康"
+
+      - alert: HighBlockRate
+        expr: |
+          sum(rate(ark_blocked_total[10m]))
+          / clamp_min(sum(rate(ark_replies_total[10m])), 0.001) > 0.2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "护栏拦截率 >20% —— 可能被攻击或人设/审核异常"
+
+      - alert: Overloaded
+        expr: sum(rate(ark_overloaded_total[5m])) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "持续 429 过载 —— 该扩容/加模型节点"

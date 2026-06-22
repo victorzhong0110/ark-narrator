@@ -66,5 +66,34 @@ services:
     depends_on: [app]
     restart: unless-stopped
 
+  prometheus:                              # 抓取所有 app 副本的 /metrics（monitoring profile）
+    image: prom/prometheus:latest
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+    profiles: ["monitoring"]
+    restart: unless-stopped
+
+  grafana:                                 # 自带预置数据源 + 仪表盘
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+    profiles: ["monitoring"]
+    restart: unless-stopped
+
+  jaeger:                                  # 链路追踪后端（OTLP）。app 设 ARK_OTEL_ENDPOINT 指过来
+    image: jaegertracing/all-in-one:latest
+    ports: ["16686:16686", "4318:4318"]
+    profiles: ["monitoring"]
+    restart: unless-stopped
+
 volumes:
   redis-data:

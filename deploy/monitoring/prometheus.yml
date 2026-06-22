@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # 通过 docker DNS 发现所有 app 副本（A 记录返回每个副本 IP）
+  - job_name: ark-app
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["app"]
+        type: A
+        port: 8000
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -94,7 +94,16 @@
 - **我能做**：云审 SDK 接线（需 key 才能跑通）、authN/Z 代码、日志加密/脱敏、合规技术项（AI 标识注入已有）。**需公司**：云审账号、备案/法务、渗透测试采购、安全评审。
 - **Done**：云审真拦截、鉴权到位、备案在手、渗透报告无高危。
 
-## P5 · 可观测与运维（约 2–3 周）
+## P5 · 可观测与运维（约 2–3 周）— 代码侧✅（真起栈实测）
+**已交付**（`deploy/monitoring/`、`docs/OBSERVABILITY.md`）：
+- Prometheus（dns_sd 抓所有 app 副本）+ 5 条告警规则 + Grafana 6 面板仪表盘（自动预置）+ Jaeger，
+  全进 compose-prod 的 `monitoring` profile，一键起。
+- OTel 链路追踪（`app/tracing.py`，env 开关，未配置 no-op，不硬依赖 otel）。
+- On-call runbook + SLO 建议（OBSERVABILITY.md）。
+- **真起栈实测**：Prometheus 发现并抓取 app 副本、指标入库（ark_requests_total 累计）、5 告警规则
+  加载、Grafana「ArkNarrator 概览」6 面板自动预置——指标 app→Prometheus→Grafana 全链路通。
+- **待真环境**：Alertmanager 接钉钉/PagerDuty、日志聚合(Loki/ELK)、OTel 真链路上报演练、真事故演练。
+
 **目标**：线上看得见、坏了能报警、有人能处理。
 - OpenTelemetry 链路追踪；日志聚合（Loki/ELK）；Prometheus + Grafana 仪表盘（现有 /metrics 扩成完整面板）。
 - 告警规则 + SLO/错误预算；on-call runbook + 事故流程；质量在线告警（破功率/兜底率突增）。
