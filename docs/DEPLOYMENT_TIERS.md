@@ -11,7 +11,7 @@
 | | **轻量自托管 budget** | **标准混合 standard** | **云旗舰 flagship** |
 |---|---|---|---|
 | 公司画像 | 小团队/试点/预算紧 | 正经上线、扛真实流量 | 旗舰体验、不差钱、要最像 |
-| 硬件 | 1×消费级 GPU(4090/A10) 或 Apple Silicon | 2-4×中端 GPU(A10/L20/H20) 自托管 | 少量自托管 + 前沿 API（或 H 卡机队） |
+| 硬件 | 1×消费级 GPU(4090/A10) 或 **1 台 Mac mini** | 2-4×中端 GPU 或 **Mac mini 集群** | 少量自托管 + 前沿 API（或 H 卡机队 / Mac Studio 集群）|
 | 生成模型/后端 | 本地 Qwen 7-8B 4-bit（MLX/llama.cpp/vLLM-small） | 自托管 Qwen 14-32B(vLLM 批处理) 或 API | 前沿大模型 API 或 72B+ 自托管 |
 | 场景判定 | 关键词（零额外调用） | LLM 语义 | LLM 语义 |
 | 内容审核 | 本地规则 + 最低档云审 | 商用云审 API + 缓存 | 商用云审 + 人工复核回路 |
@@ -38,6 +38,55 @@ ARK_PROFILE=flagship python -m app.server     # 云旗舰（需配前沿 API、�
 | budget | 一台 GPU 机；（合规上线时）一档云审网关地址/凭证 |
 | standard | 模型服务（自托管 vLLM 或 `ARK_API_BASE_URL/KEY`）+ 审核网关 `ARK_CLOUD_AUDIT_ENDPOINT` + Redis/Postgres（记忆层，工作流 B）|
 | flagship | 前沿模型 API 凭证 + 厂商云审凭证（`ARK_CLOUD_AUDIT_PROVIDER=aliyun` 等）+ 完整记忆/监控栈 |
+
+## 硬件路线：Mac mini 横向扩展（Apple Silicon 自托管）
+
+本产品底层是 MLX（Apple Silicon）栈，所以 **Mac mini 集群是一条对口且差异化的自托管路线**：
+perf/瓦、perf/元都强，体积小、能耗低（满载约数十瓦）、安静，**数据全留本地**——对要隐私/合规
+的游戏公司很合适。
+
+### 单机容量（4-bit，粗估，随机型/量化浮动）
+
+| 机型 | 统一内存 | 能跑 | 单流速度[粗估] | 定位 |
+|---|---|---|---|---|
+| Mac mini M4 | 16-32GB | 7-8B | ~20-40 tok/s | budget 节点 |
+| Mac mini M4 Pro | 48-64GB | 至 ~32B | ~10-25 tok/s | standard 节点 |
+| Mac Studio M4 Max/Ultra | 128-512GB | 70B+ | 视模型 | flagship 自托管节点 |
+
+### 拓扑：副本横向扩展（推荐，面向「多用户并发」）
+
+对话是「多用户、各自一条请求」的负载——**不需要把一个大模型拆到多机**，而是**多副本**：
+每台 mini 跑一个完整模型实例，前面一个负载均衡器分发请求，**状态外置共享**。
+
+```
+                 ┌── Mac mini #1
+玩家 → LB/路由 ──┼── Mac mini #2        每台 = 一个完整模型实例（无状态 worker）
+                 └── Mac mini #N
+                          │ 共享状态
+            Redis(会话/限流) + Postgres(对话历史/长期记忆)   ← 工作流 B
+```
+
+N 台 ≈ N× 吞吐。**前提是 worker 无状态**——这正是工作流 B（把会话/记忆/限流外置到 Redis/Postgres）
+要解决的；做完 B，加一台 mini 就是加一份吞吐。
+
+### 两种接法（都已被现有代码支持）
+
+1. **每台 mini 跑完整 app**（`ARK_BACKEND=mlx`）：LB 在 app 实例间做 L7 均衡，状态走 Redis。
+2. **推理与 app 分离**（更利于各自扩缩）：每台 mini 跑 `python -m mlx_lm.server`（**OpenAI 兼容，已验证可用**），
+   中心 app 层用 `ARK_BACKEND=api`、`ARK_API_BASE_URL=http://<mini集群-LB>/v1` 调用整个 mini 池。
+   ——`APIBackend`（工作流分档时已加）直接就能指向 mini 机队，无需改代码。
+
+### 取舍：Mac mini 集群 vs NVIDIA GPU 服务器
+
+| | Mac mini 集群 | GPU 服务器(A10/L20 + vLLM) |
+|---|---|---|
+| 强项 | 低 capex/能耗/体积、数据本地、perf/元优（中等并发） | 单机批处理吞吐高、vLLM 连续批处理成熟（高并发） |
+| 弱项 | 单机批处理吞吐弱、无 CUDA 生态 | capex/能耗高 |
+| 适合 | 中等规模、隐私敏感、预算受限的自托管 | 高并发规模化 |
+
+> 另有「分布式 MLX / exo 把一个超大模型拆到多台 mini」的玩法——用于**单机装不下的大模型**
+> 在本地跑（如 70B+ 拆 2-3 台）；延迟更高、更脆，属旗舰自托管的小众选项。**面向多用户服务，
+> 优先副本横向扩展，而非拆单模型。**
 
 ## 升档不改代码
 
