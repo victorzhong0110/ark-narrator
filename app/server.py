@@ -1,0 +1,251 @@
+"""ArkNarrator 干员对话服务（FastAPI）。
+
+端点：
+  GET  /health      存活检测 + 模型名
+  GET  /characters  可对话干员列表（含展示信息）
+  POST /chat        单次对话（同步，已过出入口护栏）
+  POST /stream      流式：先生成→审核→再把通过后的安全文本逐字推送
+  GET  /            内嵌 Demo（带 AI 标识与免责声明）
+
+关键安全取舍：流式推送的是「审核之后」的文本（守出口原则），牺牲少量首字延迟换安全。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import uuid
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
+
+from app.build import build_orchestrator
+from app.config import load_settings
+from app.orchestrator import DialogueOrchestrator
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+orchestrator: DialogueOrchestrator | None = None
+settings = load_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global orchestrator
+    orchestrator = build_orchestrator(settings)
+    yield
+
+
+app = FastAPI(title="ArkNarrator 干员对话", version="0.3.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
+
+
+class Turn(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    character: str = Field(..., description="干员名，例如 '阿米娅'")
+    message: str = Field(..., description="用户本轮发言")
+    history: list[Turn] = Field(default_factory=list)
+    session_id: str | None = None
+
+
+def _ids(req: ChatRequest, request: Request) -> tuple[str, str]:
+    session_id = req.session_id or str(uuid.uuid4())
+    user_id = request.client.host if request.client else "anon"
+    return session_id, user_id
+
+
+@app.get("/health")
+async def health():
+    if orchestrator is None:
+        raise HTTPException(503, "未就绪")
+    return {"status": "ok", "model": orchestrator._backend.label,
+            "characters": len(orchestrator.characters)}
+
+
+@app.get("/characters")
+async def characters():
+    if orchestrator is None:
+        raise HTTPException(503, "未就绪")
+    return {
+        "characters": [
+            {"name": c.name, "codename": c.codename, "faction": c.faction}
+            for c in orchestrator.characters.values()
+        ]
+    }
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest, request: Request):
+    if orchestrator is None:
+        raise HTTPException(503, "未就绪")
+    if req.character not in orchestrator.characters:
+        raise HTTPException(400, f"未知干员：{req.character}")
+    session_id, user_id = _ids(req, request)
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+    reply = await asyncio.to_thread(
+        orchestrator.respond, session_id, user_id, req.character, req.message, history
+    )
+    return {
+        "character": reply.character, "response": reply.text,
+        "blocked": reply.blocked, "category": reply.category,
+        "ai_label": reply.ai_label, "session_id": session_id,
+    }
+
+
+@app.post("/stream")
+async def stream(req: ChatRequest, request: Request):
+    if orchestrator is None:
+        raise HTTPException(503, "未就绪")
+    if req.character not in orchestrator.characters:
+        raise HTTPException(400, f"未知干员：{req.character}")
+    session_id, user_id = _ids(req, request)
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+
+    # 先完整生成 + 审核（守出口），再把安全文本逐字推送
+    reply = await asyncio.to_thread(
+        orchestrator.respond, session_id, user_id, req.character, req.message, history
+    )
+
+    async def gen():
+        for ch in reply.text:
+            yield {"data": json.dumps({"token": ch}, ensure_ascii=False)}
+            await asyncio.sleep(0)
+        yield {"data": json.dumps({
+            "done": True, "blocked": reply.blocked,
+            "category": reply.category, "ai_label": reply.ai_label,
+            "session_id": session_id,
+        }, ensure_ascii=False)}
+
+    return EventSourceResponse(gen())
+
+
+@app.get("/", response_class=HTMLResponse)
+async def demo():
+    return DEMO_HTML
+
+
+DEMO_HTML = """\
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArkNarrator · 干员对话</title>
+<style>
+  :root{ --ark:#e8a838; --bg:#0f1117; --card:#171a23; --line:#2a2f3a; --text:#e6e6e6; --muted:#8b93a3; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--text); font-family:"Noto Sans SC",system-ui,sans-serif;
+        display:flex; flex-direction:column; height:100vh; }
+  header{ background:var(--card); border-bottom:1px solid var(--line); padding:10px 18px;
+          display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  header h1{ font-size:1rem; color:var(--ark); letter-spacing:.5px; }
+  header .sub{ font-size:.72rem; color:var(--muted); }
+  select,button{ border-radius:8px; border:1px solid var(--line); background:#0f3460;
+                 color:var(--text); padding:6px 12px; font-size:.85rem; }
+  button{ background:var(--ark); color:#13151c; font-weight:700; border:none; cursor:pointer; }
+  button:hover{ filter:brightness(1.08); } button:disabled{ opacity:.5; cursor:default; }
+  #banner{ font-size:.72rem; color:var(--muted); background:#13161e; border-bottom:1px solid var(--line);
+           padding:5px 18px; }
+  #chat{ flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:12px; }
+  .msg{ max-width:74%; padding:10px 14px; border-radius:14px; line-height:1.65; white-space:pre-wrap; font-size:.92rem; }
+  .user{ background:#0f3460; align-self:flex-end; border-bottom-right-radius:3px; }
+  .assistant{ background:#1b2330; align-self:flex-start; border-bottom-left-radius:3px; border:1px solid var(--line); }
+  .assistant .who{ font-size:.72rem; color:var(--ark); margin-bottom:4px; font-weight:700; }
+  .assistant.blocked{ border-color:#8a5a2b; }
+  .tag{ font-size:.62rem; color:var(--muted); margin-top:5px; }
+  footer{ background:var(--card); border-top:1px solid var(--line); padding:10px 16px; display:flex; gap:8px; }
+  footer input{ flex:1; border-radius:8px; border:1px solid var(--line); background:#0f1117; color:var(--text); padding:9px 12px; }
+  #status{ font-size:.7rem; color:var(--muted); padding:3px 18px; background:var(--card); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ ArkNarrator</h1>
+  <span class="sub">明日方舟干员对话 · 本地推理 + 纵深安全护栏</span>
+  <label style="margin-left:auto">干员
+    <select id="char"></select>
+  </label>
+  <button onclick="clearHistory()">清空</button>
+</header>
+<div id="banner">⚠️ 本回复由 AI 生成，仅供娱乐；角色与世界观版权归鹰角网络所有。请勿据此做现实决策。</div>
+<div id="status">正在连接…</div>
+<div id="chat"></div>
+<footer>
+  <input id="inp" type="text" placeholder="对干员说点什么…" onkeydown="if(event.key==='Enter')send()">
+  <button id="btn" onclick="send()">发送</button>
+</footer>
+<script>
+const chat=document.getElementById('chat'), inp=document.getElementById('inp'),
+      btn=document.getElementById('btn'), sel=document.getElementById('char'),
+      status=document.getElementById('status');
+let history=[], sessionId=null;
+
+fetch('/characters').then(r=>r.json()).then(d=>{
+  d.characters.forEach(c=>{ const o=document.createElement('option');
+    o.value=c.name; o.textContent=c.codename?`${c.name}（${c.codename}）`:c.name; sel.appendChild(o); });
+});
+fetch('/health').then(r=>r.json()).then(d=>{ status.textContent='模型：'+d.model+' · 干员 '+d.characters+' 名'; })
+               .catch(()=>{ status.textContent='服务未就绪'; });
+
+function clearHistory(){ history=[]; sessionId=null; chat.innerHTML=''; }
+function addMsg(role,text,who){
+  const div=document.createElement('div'); div.className='msg '+role;
+  if(role==='assistant'){ div.innerHTML='<div class="who">'+who+'</div>'; }
+  const p=document.createElement('div'); p.textContent=text; div.appendChild(p);
+  chat.appendChild(div); chat.scrollTop=chat.scrollHeight; return {div,p};
+}
+async function send(){
+  const msg=inp.value.trim(); if(!msg) return;
+  const char=sel.value; inp.value=''; btn.disabled=true;
+  addMsg('user',msg);
+  const {div,p}=addMsg('assistant','',char); let full='';
+  try{
+    const resp=await fetch('/stream',{ method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({character:char,message:msg,history:history,session_id:sessionId}) });
+    const reader=resp.body.getReader(), dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); let idx;
+      while((idx=buf.indexOf('\\n\\n'))>=0){
+        const line=buf.slice(0,idx); buf=buf.slice(idx+2);
+        if(line.startsWith('data:')){
+          const d=JSON.parse(line.slice(5).trim());
+          if(d.done){ sessionId=d.session_id;
+            if(d.blocked){ div.classList.add('blocked');
+              const t=document.createElement('div'); t.className='tag';
+              t.textContent='⚠ 已由安全护栏处理（'+d.category+'）'; div.appendChild(t); }
+          } else if(d.token){ full+=d.token; p.textContent=full; chat.scrollTop=chat.scrollHeight; }
+        }
+      }
+    }
+  }catch(e){ p.textContent='[错误：'+e.message+']'; }
+  history.push({role:'user',content:msg},{role:'assistant',content:full});
+  btn.disabled=false; inp.focus();
+}
+</script>
+</body>
+</html>
+"""
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app.server:app",
+        host=os.getenv("API_HOST", "0.0.0.0"),
+        port=int(os.getenv("API_PORT", "8000")),
+        reload=False,
+    )

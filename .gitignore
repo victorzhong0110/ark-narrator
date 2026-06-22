@@ -21,6 +21,10 @@ checkpoints/
 # Secrets
 .env
 
+# Runtime audit logs（含玩家输入输出，勿入库）
+logs/
+*.jsonl.log
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints

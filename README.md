@@ -16,6 +16,21 @@
 
 ---
 
+## 🆕 干员对话产品（`app/`）
+
+> 本仓库已从「微调研究」演进出一个**可上线形状的对话服务**：**base 模型 + 角色卡 + RAG lore + 纵深安全护栏**。
+> 依据正是本项目自测得出的结论——**8B 上 harness > 微调**。详见 **[docs/DIALOGUE_PRODUCT.md](docs/DIALOGUE_PRODUCT.md)**。
+
+```bash
+pip install -r requirements-app.txt
+ARK_BACKEND=scripted python -m app.server   # 不下模型即可跑通整条链路 → http://localhost:8000
+python -m pytest                            # 43 项护栏红队回归用例
+```
+
+四层纵深防御（入口/提示词/出口★/运维）完整落地了《明日方舟AI角色安全防御指南》与《涉政内容专项防御指导》两份设计文档。下方为原微调研究记录。
+
+---
+
 ## 实验结果摘要
 
 ### 训练结果

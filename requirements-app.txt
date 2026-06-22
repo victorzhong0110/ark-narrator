@@ -1,0 +1,18 @@
+# ── 干员对话产品（app/）最小依赖 ──────────────────────────────
+# 护栏 / 编排 / RAG 是纯 Python，仅服务层与本地推理需要下列包。
+
+# 推理服务
+fastapi>=0.110.0
+uvicorn>=0.29.0
+sse-starlette>=2.0.0
+pydantic>=2.0.0
+
+# 配置 / 角色卡 / lore
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# 本地推理（Apple Silicon）。仅 ARK_BACKEND=mlx 时需要；scripted 后端不需要。
+mlx-lm>=0.18.0
+
+# 测试
+pytest>=8.0.0
