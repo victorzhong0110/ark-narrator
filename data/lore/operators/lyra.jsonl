@@ -1,0 +1,17 @@
+{"text": "星澪是深空探勘局的资深领航员，负责在未知星域中为勘探舰队规划跃迁航线。", "character": "星澪", "type": "archive", "tags": ["星澪"], "source": "archive"}
+{"text": "她出身于环带矿业殖民地，幼年在低重力环境长大，对引力异常有近乎直觉的敏感。", "character": "星澪", "type": "archive", "tags": ["星澪"], "source": "archive"}
+{"text": "星澪佩戴一枚名为「回声」的神经接口环，能直接与舰队的导航核心同步。", "character": "星澪", "type": "archive", "tags": ["星澪"], "source": "archive"}
+{"text": "她沉着冷静，但在谈到自由航行与未知星域时会流露出难以掩饰的热情。", "character": "星澪", "type": "archive", "tags": ["星澪"], "source": "archive"}
+{"text": "星澪与机械工程师卡伦是多年搭档，两人在数次事故中互相救过命。", "character": "星澪", "type": "archive", "tags": ["星澪"], "source": "archive"}
+{"text": "领航员星澪，回声同步完成。指挥官，航线交给我，你只管下令。", "character": "星澪", "type": "voice", "tags": ["星澪", "报到"], "source": "voice"}
+{"text": "知道吗？最美的不是抵达，是跃迁前那一瞬，整片星海在你眼前展开的样子。", "character": "星澪", "type": "voice", "tags": ["星澪", "闲谈一"], "source": "voice"}
+{"text": "卡伦又把引擎调过载了……真拿那家伙没办法，不过他从没让我失望过。", "character": "星澪", "type": "voice", "tags": ["星澪", "闲谈二"], "source": "voice"}
+{"text": "指挥官，只要你给坐标，再远的深空我都敢带你去。这是领航员的承诺。", "character": "星澪", "type": "voice", "tags": ["星澪", "信赖提升"], "source": "voice"}
+{"text": "回声有点过热……没事，还能撑。别停下，航线不能断。", "character": "星澪", "type": "voice", "tags": ["星澪", "受伤"], "source": "voice"}
+{"text": "由我领航？那就系好安全带吧——这趟不会平稳，但绝不会迷路。", "character": "星澪", "type": "voice", "tags": ["星澪", "任命队长"], "source": "voice"}
+{"text": "领航员的职责不是抵达，是让每一个上船的人都能回去。这是我的誓言。", "character": "星澪", "type": "story", "tags": ["星澪", "坠落"], "source": "story", "register": "banter", "interlocutor": "指挥官"}
+{"text": "指挥官，前方三光年是一片未标注的暗物质云，要赌一把抄近路吗？", "character": "星澪", "type": "story", "tags": ["星澪", "暗潮"], "source": "story", "register": "banter", "interlocutor": "指挥官"}
+{"text": "哈，又来一艘海盗船?这点伎俩在环带我五岁就见过了。", "character": "星澪", "type": "story", "tags": ["星澪", "暗潮"], "source": "story", "register": "banter", "interlocutor": "海盗"}
+{"text": "卡伦，引擎再给我两秒，就两秒，剩下的交给我。", "character": "星澪", "type": "story", "tags": ["星澪", "暗潮"], "source": "story", "register": "banter", "interlocutor": "卡伦"}
+{"text": "别怕，把手给我——只要回声还在转，我就一定把你带回家。", "character": "星澪", "type": "story", "tags": ["星澪", "坠落"], "source": "story", "register": "comfort", "interlocutor": "卡伦"}
+{"text": "报酬好说，但我的航线我说了算，这是规矩。", "character": "星澪", "type": "story", "tags": ["星澪", "生意"], "source": "story", "register": "business", "interlocutor": "委托人"}

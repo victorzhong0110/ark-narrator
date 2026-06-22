@@ -19,6 +19,7 @@ from app.logging_store import AuditLog
 from app.rag.retriever import Retriever, render_lore_block
 from app.registers import REGISTER_LABEL, Register
 from app.scene import HeuristicSceneTagger, SceneTagger
+from app.world import DEFAULT_WORLD, WorldProfile
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class DialogueOrchestrator:
         output_guard: OutputGuard,
         audit_log: AuditLog,
         scene_tagger: SceneTagger | None = None,
+        world: WorldProfile = DEFAULT_WORLD,
     ):
         self._s = settings
         self._backend = backend
@@ -56,6 +58,7 @@ class DialogueOrchestrator:
         self._out = output_guard
         self._log = audit_log
         self._scene = scene_tagger or HeuristicSceneTagger()
+        self._world = world
         self._fallback_idx: dict[str, int] = defaultdict(int)
 
     @property
@@ -93,7 +96,7 @@ class DialogueOrchestrator:
         register_block = ""
         if parts:
             register_block = f"【当前对话氛围：{REGISTER_LABEL[register]}】\n" + "\n".join(parts)
-        system = render_system_prompt(card, lore_block, register_block)
+        system = render_system_prompt(card, lore_block, register_block, world=self._world)
         return system, register
 
     def _trim_history(self, history: list[Message]) -> list[Message]:

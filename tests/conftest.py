@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.build import SYSTEM_MARKERS
+from app.build import _system_markers
 from app.characters.cards import load_characters
 from app.config import ROOT, Settings
 from app.guard import rules
@@ -41,8 +41,9 @@ def input_guard(settings, t3_terms) -> InputGuard:
 
 @pytest.fixture
 def output_guard(settings, t3_terms) -> OutputGuard:
+    from app.world import DEFAULT_WORLD
     return OutputGuard(
-        settings, system_markers=SYSTEM_MARKERS, t3_terms=t3_terms,
+        settings, system_markers=_system_markers(DEFAULT_WORLD), t3_terms=t3_terms,
         cloud_auditor=DisabledAuditor(),
     )
 

@@ -106,6 +106,10 @@ class Settings:
     audit_log_path: Path = field(
         default_factory=lambda: ROOT / os.getenv("ARK_AUDIT_LOG", "logs/audit.jsonl")
     )
+    # 世界观/IP 配置（换 IP 只改这份；缺省=明日方舟）
+    world_config: Path = field(
+        default_factory=lambda: ROOT / os.getenv("ARK_WORLD_CONFIG", "data/world.yaml")
+    )
 
     # ---- 合规：AI 标识 ----
     ai_label: str = field(

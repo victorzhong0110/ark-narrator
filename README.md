@@ -16,18 +16,28 @@
 
 ---
 
-## 🆕 干员对话产品（`app/`）
+## 🆕 角色对话引擎（`app/`）—— 接上你的角色数据即可用
 
-> 本仓库已从「微调研究」演进出一个**可上线形状的对话服务**：**base 模型 + 角色卡 + RAG lore + 纵深安全护栏**。
-> 依据正是本项目自测得出的结论——**8B 上 harness > 微调**。详见 **[docs/DIALOGUE_PRODUCT.md](docs/DIALOGUE_PRODUCT.md)**。
+> 本仓库已从「微调研究」演进出一个**可上线形状的角色对话引擎**：**base 模型 + 角色卡 + RAG lore
+> + 分场景语气 + 纵深安全护栏**。依据正是本项目自测结论——**8B 上 harness > 微调**。
+
+**它不是明日方舟专用 demo，而是一个引擎**——明日方舟只是用公开数据跑通的**参考实现**。
+换接你公司自己的 IP，只替换两个解耦的接缝、**不改引擎代码**：
+
+- **数据**：`OperatorSource → OperatorIR`（写一个适配器，或把数据导出成 JSON schema）
+- **世界观/IP**：`WorldProfile`（`data/world.yaml`，换作品名/世界名/角色统称/版权方）
+
+> 已验证：一份**非明日方舟**的科幻角色数据零改代码跑通整条管线（`data/companies/example/`、
+> `tests/test_ingest.py`）。接入指南见 **[docs/INTEGRATION.md](docs/INTEGRATION.md)**。
 
 ```bash
 pip install -r requirements-app.txt
 ARK_BACKEND=scripted python -m app.server   # 不下模型即可跑通整条链路 → http://localhost:8000
-python -m pytest                            # 43 项护栏红队回归用例
+python -m pytest                            # 65 项回归用例（护栏红队 + 接入契约 + 语气路由）
 ```
 
-四层纵深防御（入口/提示词/出口★/运维）完整落地了《明日方舟AI角色安全防御指南》与《涉政内容专项防御指导》两份设计文档。下方为原微调研究记录。
+文档：引擎 **[docs/DIALOGUE_PRODUCT.md](docs/DIALOGUE_PRODUCT.md)** · 接入 **[docs/INTEGRATION.md](docs/INTEGRATION.md)** ·
+干员复刻流程 **[docs/OPERATOR_PIPELINE.md](docs/OPERATOR_PIPELINE.md)**。四层纵深防御完整落地两份安全设计文档。下方为原微调研究记录。
 
 ---
 

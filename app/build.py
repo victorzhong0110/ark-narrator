@@ -16,19 +16,23 @@ from app.orchestrator import DialogueOrchestrator
 from app.rag.retriever import LexicalRetriever
 from app.rag.store import load_lore
 from app.scene import get_scene_tagger
+from app.world import WorldProfile, load_world
 
 logger = logging.getLogger(__name__)
 
-# 出现在 system prompt 中、绝不应出现在模型输出里的标记（泄露检测用）
-SYSTEM_MARKERS: tuple[str, ...] = (
-    "[扮演规则",
-    "你正在扮演明日方舟干员",
-    "扮演规则 · 必须严格遵守",
-)
+
+def _system_markers(world: WorldProfile) -> tuple[str, ...]:
+    """system prompt 中绝不应出现在模型输出里的标记（泄露检测用），按 IP 派生。"""
+    return (
+        "[扮演规则",
+        "扮演规则 · 必须严格遵守",
+        f"你正在扮演{world.work}{world.role_term}",
+    )
 
 
 def build_orchestrator(settings: Settings | None = None) -> DialogueOrchestrator:
     s = settings or load_settings()
+    world = load_world(s.world_config)
 
     characters = load_characters(s.characters_dir)
     if not characters:
@@ -44,17 +48,17 @@ def build_orchestrator(settings: Settings | None = None) -> DialogueOrchestrator
     cloud = get_cloud_auditor(s) or DisabledAuditor()
     in_guard = InputGuard(s, t3_terms=t3_terms)
     out_guard = OutputGuard(
-        s, system_markers=SYSTEM_MARKERS, t3_terms=t3_terms, cloud_auditor=cloud
+        s, system_markers=_system_markers(world), t3_terms=t3_terms, cloud_auditor=cloud
     )
     audit = AuditLog(s.audit_log_path)
     scene_tagger = get_scene_tagger(s, backend)
 
     logger.info(
-        "编排就绪：后端=%s 角色=%d lore=%d T3词=%d 云端审核=%s RAG=%s 场景判定=%s",
-        backend.label, len(characters), len(chunks), len(t3_terms),
+        "编排就绪：IP=%s 后端=%s 角色=%d lore=%d T3词=%d 云端审核=%s RAG=%s 场景判定=%s",
+        world.work, backend.label, len(characters), len(chunks), len(t3_terms),
         getattr(cloud, "name", "?"), s.rag_enabled, s.scene_tagger,
     )
     return DialogueOrchestrator(
         s, backend, retriever, characters, in_guard, out_guard, audit,
-        scene_tagger=scene_tagger,
+        scene_tagger=scene_tagger, world=world,
     )
