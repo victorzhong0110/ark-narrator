@@ -103,6 +103,11 @@ async def _bounded_respond(session_id: str, user_id: str, character: str,
         raise HTTPException(504, "生成超时，请重试") from None
     finally:
         _sema.release()
+    # 在线质量监控：回复量(按角色) / 语气档位分布 / 拦截率
+    METRICS.inc("ark_replies_total", {"character": character})
+    reg = reply.meta.get("register") if isinstance(reply.meta, dict) else None
+    if reg:
+        METRICS.inc("ark_register_total", {"register": reg})
     if reply.blocked:
         METRICS.inc("ark_blocked_total", {"category": reply.category})
     return reply

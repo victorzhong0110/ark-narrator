@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: pip install -r requirements-server.txt ruff pytest httpx
+      - name: Lint
+        run: ruff check app tests
+      - name: Test (含护栏红队 + 角色保真 gate 逻辑 + 接入契约)
+        run: pytest -q
+# 注：角色保真评测对「真实模型」的跑分（scripts/eval_character.py）需 GPU/API，
+# 不在 CI 内；CI 跑确定性部分（gate 逻辑、护栏、存储、服务、接入）。真模型评测作夜跑/手动 gate。
