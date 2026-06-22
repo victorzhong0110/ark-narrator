@@ -28,9 +28,14 @@ def _strip_think(text: str) -> str:
 
 
 class APIBackend:
-    def __init__(self, model: str, base_url: str, api_key: str, *, client=None):
+    def __init__(self, model: str, base_url: str, api_key: str, *,
+                 disable_thinking: bool = False, client=None):
         self.label = f"api:{model}"
         self._model = model
+        # 自托管 Qwen 节点：经 chat_template_kwargs 关思考（mlx_lm.server/vLLM 支持）
+        self._extra_body = (
+            {"chat_template_kwargs": {"enable_thinking": False}} if disable_thinking else None
+        )
         if client is not None:
             self._client = client
         else:
@@ -44,7 +49,7 @@ class APIBackend:
                  max_tokens: int = 320, temperature: float = 0.7) -> str:
         resp = self._client.chat.completions.create(
             model=self._model, messages=self._messages(system, messages),
-            max_tokens=max_tokens, temperature=temperature,
+            max_tokens=max_tokens, temperature=temperature, extra_body=self._extra_body,
         )
         return _strip_think(resp.choices[0].message.content or "")
 
@@ -53,6 +58,7 @@ class APIBackend:
         stream = self._client.chat.completions.create(
             model=self._model, messages=self._messages(system, messages),
             max_tokens=max_tokens, temperature=temperature, stream=True,
+            extra_body=self._extra_body,
         )
         for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None

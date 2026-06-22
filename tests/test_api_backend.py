@@ -54,3 +54,17 @@ def test_api_stream_yields_chunks():
 def test_factory_api_requires_creds():
     with pytest.raises(ValueError):
         get_backend(Settings(backend="api", api_base_url="", api_key=""))
+
+
+def test_disable_thinking_passes_extra_body():
+    seen = {}
+
+    class _Cap:
+        def create(self, **kw):
+            seen.update(kw)
+            return _Resp([_Choice(content="ok")])
+
+    client = type("C", (), {"chat": type("X", (), {"completions": _Cap()})()})()
+    APIBackend("m", "u", "k", disable_thinking=True, client=client).generate(
+        "s", [{"role": "user", "content": "hi"}])
+    assert seen["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}

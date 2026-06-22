@@ -18,20 +18,23 @@ logger = logging.getLogger(__name__)
 
 class PooledAPIBackend:
     def __init__(self, store: Store, model: str, *, group: str = "models",
-                 api_key: str = "EMPTY", client_factory: Callable[[str], object] | None = None):
+                 api_key: str = "EMPTY", disable_thinking: bool = True,
+                 client_factory: Callable[[str], object] | None = None):
         self.label = f"pool:{model}"
         self._store = store
         self._model = model
         self._group = group
         self._key = api_key or "EMPTY"
-        self._client_factory = client_factory      # 测试可注入 addr→client
+        self._disable_thinking = disable_thinking   # 自托管 Qwen 节点默认关思考
+        self._client_factory = client_factory       # 测试可注入 addr→client
         self._backends: dict[str, APIBackend] = {}
 
     def _backend_for(self, addr: str) -> APIBackend:
         if addr not in self._backends:
             client = self._client_factory(addr) if self._client_factory else None
             self._backends[addr] = APIBackend(
-                self._model, f"http://{addr}/v1", self._key, client=client)
+                self._model, f"http://{addr}/v1", self._key,
+                disable_thinking=self._disable_thinking, client=client)
         return self._backends[addr]
 
     def _ordered(self) -> list[str]:

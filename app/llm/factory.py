@@ -24,12 +24,14 @@ def get_backend(settings: Settings, store=None) -> LLMBackend:
         if not settings.api_base_url or not settings.api_key:
             raise ValueError("api 后端需要 ARK_API_BASE_URL 与 ARK_API_KEY")
         logger.info("使用 APIBackend：%s @ %s", settings.model_path, settings.api_base_url)
-        return APIBackend(settings.model_path, settings.api_base_url, settings.api_key)
+        return APIBackend(settings.model_path, settings.api_base_url, settings.api_key,
+                          disable_thinking=settings.disable_thinking)
     if backend == "pool":
         from app.llm.pool_backend import PooledAPIBackend
         if store is None:
             raise ValueError("pool 后端需要 store（节点服务发现走存储）")
         logger.info("使用 PooledAPIBackend：组=%s", settings.node_group)
         return PooledAPIBackend(store, settings.model_path,
-                                group=settings.node_group, api_key=settings.api_key or "EMPTY")
+                                group=settings.node_group, api_key=settings.api_key or "EMPTY",
+                                disable_thinking=settings.disable_thinking or True)
     raise ValueError(f"未知后端：{settings.backend}（应为 mlx / api / pool / scripted）")

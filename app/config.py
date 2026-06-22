@@ -60,6 +60,11 @@ class Settings:
     api_key: str = field(default_factory=lambda: os.getenv("ARK_API_KEY", ""))
     # pool 后端（backend=pool）：自注册节点池的组名（Mac 节点心跳注册到这个组）
     node_group: str = field(default_factory=lambda: os.getenv("ARK_NODE_GROUP", "models"))
+    # 关闭思考链（自托管 Qwen 节点：经 chat_template_kwargs 传给 mlx_lm.server/vLLM）。
+    # 云端通用 OpenAI 端点可能不支持，故默认关；pool 后端默认开。
+    disable_thinking: bool = field(
+        default_factory=lambda: _env_bool("ARK_DISABLE_THINKING", False)
+    )
 
     # ---- 生成参数 ----
     temperature: float = field(default_factory=lambda: _env_float("ARK_TEMPERATURE", 0.7))

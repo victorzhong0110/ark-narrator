@@ -107,10 +107,11 @@ app 层的 `PooledAPIBackend` 从 Redis 读活节点列表、客户端侧轮询 
 **备选形态 B（每台 Mac 跑完整 app + nginx）**：见 `deploy/nginx.example.conf`；状态共享在 Redis，
 LB 加一行 `server <新IP>:8000;` + reload，`/readyz` 探活。
 
-> 诚实说明：分布式机制（自注册/发现/轮询/故障转移）已由单测 + 真链路连通验证（`PooledAPIBackend`
-> 成功调用本机真 `mlx_lm.server`）。**未实测的是**：跨多台物理 Mac 的真集群运行；且 `mlx_lm.server`
-> 跑 Qwen3 默认带思考链，需在节点侧关闭思考（配置 chat template / 用非思考模型），否则回复可能为空——
-> 这是模型节点的配置项，与分布式机制无关。每节点各需下载一份模型权重。
+> 验证情况（诚实）：分布式机制已**实测**——同机起两个真 `mlx_lm.server`（端口 8080/8081）+
+> `PooledAPIBackend`：连发请求在两节点间**轮询**、杀掉其一后**自动故障转移**到健康节点、均出真回复。
+> Qwen3 思考链导致空回复的问题已解（`ARK_DISABLE_THINKING`，pool 后端默认开，经 chat_template_kwargs
+> 传给 mlx_lm.server）。**仍未实测**：跨多台**物理** Mac（受限于只有一台机器，用多端口模拟了多节点）；
+> 心跳/TTL 自动下线为单测覆盖。每节点各需下载一份模型权重。
 
 ## 升档不改代码
 
