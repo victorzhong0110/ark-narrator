@@ -89,6 +89,33 @@ N 台 ≈ N× 吞吐。**前提是 worker 无状态**——会话历史/长期�
 > 在本地跑（如 70B+ 拆 2-3 台）；延迟更高、更脆，属旗舰自托管的小众选项。**面向多用户服务，
 > 优先副本横向扩展，而非拆单模型。**
 
+### 加一台 Mac：具体步骤
+
+前提（一次性）：①一个共享 Redis（`ARK_STORE=redis`）②一个 LB（`deploy/nginx.example.conf`）。
+
+**形态 A（推荐，Mac 当模型节点）**
+```bash
+# 新 Mac 上：
+pip install mlx-lm
+python -m mlx_lm.server --model mlx-community/Qwen3-8B-4bit --host 0.0.0.0 --port 8080
+# 然后在 LB 的 mlx_model_pool 加一行 server <新Mac-IP>:8080; → nginx -s reload
+# app 层不动、不重启。app 层用 ARK_BACKEND=api、ARK_API_BASE_URL=http://<LB>/v1
+```
+
+**形态 B（每台 Mac 跑完整 app）**
+```bash
+# 新 Mac 上：
+git clone <repo> && cd ark-narrator && pip install -r requirements-app.txt
+export ARK_BACKEND=mlx ARK_STORE=redis ARK_REDIS_URL=redis://<redis主机>:6379/0
+uvicorn app.server:app --host 0.0.0.0 --port 8000
+# LB 的 ark_app_pool 加一行 server <新Mac-IP>:8000; → reload
+# 状态在共享 Redis，新机即刻共享会话/长期记忆；LB 用 /readyz 探活
+```
+
+> 诚实说明：这是架构**设计支持**的路径（Redis 存储、API 后端、mlx_lm.server 兼容、/readyz
+> 探针均已验证），但跨两台物理 Mac 的端到端集群我尚未实测；LB 与 Redis 需自行架设；
+> 每个节点各需下载一份模型权重。
+
 ## 升档不改代码
 
 三档共用同一套引擎与安全护栏。从 budget 升 standard，只是把后端从本地 8B 换成更大模型、
