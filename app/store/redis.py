@@ -16,14 +16,21 @@ def _s(v) -> str:
 
 
 class RedisStore:
-    def __init__(self, url: str = "redis://localhost:6379/0", *, client=None):
+    def __init__(self, url: str = "redis://localhost:6379/0", *, client=None,
+                 sentinels: list[str] | None = None, master: str = "mymaster"):
         if client is not None:
             self._r = client
+            return
+        try:
+            import redis  # 惰性导入
+        except ImportError as exc:
+            raise RuntimeError("RedisStore 需要 `pip install redis`") from exc
+        if sentinels:
+            # Sentinel 高可用：主挂自动切换，客户端始终连当前 master
+            from redis.sentinel import Sentinel
+            nodes = [(h.split(":")[0], int(h.split(":")[1])) for h in sentinels if ":" in h]
+            self._r = Sentinel(nodes, socket_timeout=1.0).master_for(master)
         else:
-            try:
-                import redis  # 惰性导入
-            except ImportError as exc:
-                raise RuntimeError("RedisStore 需要 `pip install redis`") from exc
             self._r = redis.Redis.from_url(url)
 
     def append_turn(self, session_id: str, role: str, content: str) -> None:

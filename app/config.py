@@ -118,6 +118,12 @@ class Settings:
 
     # ---- 状态存储：memory（单机）| sqlite（单机持久）| redis（多 worker 共享）----
     store: str = field(default_factory=lambda: os.getenv("ARK_STORE", "memory"))
+    redis_url: str = field(
+        default_factory=lambda: os.getenv("ARK_REDIS_URL", "redis://localhost:6379/0")
+    )
+    # Redis 高可用（Sentinel）：逗号分隔的 host:port；设了就走 Sentinel（主挂自动切换）
+    redis_sentinels: str = field(default_factory=lambda: os.getenv("ARK_REDIS_SENTINELS", ""))
+    redis_master: str = field(default_factory=lambda: os.getenv("ARK_REDIS_MASTER", "mymaster"))
     # 长期记忆：每 N 轮 用户×角色 对话滚动摘要一次；上限字数
     memory_every: int = field(default_factory=lambda: _env_int("ARK_MEMORY_EVERY", 6))
     memory_max_chars: int = field(

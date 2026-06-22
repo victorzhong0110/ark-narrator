@@ -1,0 +1,70 @@
+# 单主机「一键起全栈」（standard 档）：nginx LB → 可扩 app 副本 → 共享 Redis。
+#
+#   docker compose -f deploy/compose-prod.yml up -d --scale app=3        # 基础（Redis 持久化）
+#   docker compose -f deploy/compose-prod.yml --profile ha up -d --scale app=3   # + Redis Sentinel HA
+#
+# 默认 app 用 scripted 后端，便于无 GPU 本地验证整套 IaC/HA 链路；真模型把 ARK_BACKEND 改为
+# api/pool 并指向你的推理服务（Mac 机队或 vLLM）。机密放 deploy/.env（gitignore），不入 compose。
+name: ark-narrator-prod
+
+services:
+  redis:                                   # master，开 AOF 持久化（消除「重启丢状态」）
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis-replica:                           # 副本（HA），ha profile 才起
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis", "6379"]
+    depends_on: [redis]
+    profiles: ["ha"]
+    restart: unless-stopped
+
+  sentinel:                                # 哨兵 x3（HA），主挂自动切换
+    image: redis:7-alpine
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+    volumes: ["./redis/sentinel.conf:/etc/redis/sentinel.conf"]
+    depends_on: [redis, redis-replica]
+    deploy:
+      replicas: 3
+    profiles: ["ha"]
+    restart: unless-stopped
+
+  app:                                     # 可横向扩展（--scale app=N），无状态，状态在 Redis
+    build: ..
+    env_file:
+      - path: .env                         # 机密放这里（gitignore），缺省也能起
+        required: false
+    environment:
+      ARK_BACKEND: ${ARK_BACKEND:-scripted}
+      ARK_STORE: redis
+      ARK_REDIS_URL: redis://redis:6379/0
+      # HA 模式下改走 Sentinel（覆盖上面的 url）：
+      ARK_REDIS_SENTINELS: ${ARK_REDIS_SENTINELS:-}
+      ARK_REDIS_MASTER: mymaster
+      ARK_SCENE_TAGGER: ${ARK_SCENE_TAGGER:-heuristic}
+      ARK_CLOUD_AUDIT: ${ARK_CLOUD_AUDIT:-true}
+      ARK_CLOUD_AUDIT_PROVIDER: ${ARK_CLOUD_AUDIT_PROVIDER:-mock}
+      ARK_API_AUTH_KEY: ${ARK_API_AUTH_KEY:-}
+      ARK_MAX_CONCURRENCY: ${ARK_MAX_CONCURRENCY:-8}
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose: ["8000"]
+    restart: unless-stopped
+
+  lb:                                      # nginx：对 app 副本做负载均衡
+    image: nginx:alpine
+    volumes: ["./lb.conf:/etc/nginx/nginx.conf:ro"]
+    ports: ["8000:80"]
+    depends_on: [app]
+    restart: unless-stopped
+
+volumes:
+  redis-data:

@@ -1,0 +1,53 @@
+# 基线：单实例 + 持久化（消除「重启丢状态」）。
+# 生产 HA：换成 Bitnami redis（Sentinel/Cluster）或托管 Redis，app 侧设 ARK_REDIS_SENTINELS 即可。
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ark-narrator
+      component: redis
+  template:
+    metadata:
+      labels:
+        app: ark-narrator
+        component: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  clusterIP: None
+  selector:
+    app: ark-narrator
+    component: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

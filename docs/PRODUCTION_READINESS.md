@@ -29,7 +29,18 @@
 - **我能做**：写 SLO/验收文档、指标口径。**需公司**：定真实业务目标数字。
 - **Done**：每个后续阶段都有可勾的量化验收。
 
-## P1 · 真基建：IaC + 全栈一键起 + HA 基础（约 2–4 周）
+## P1 · 真基建：IaC + 全栈一键起 + HA 基础（约 2–4 周）— 代码侧✅
+**已交付**（`deploy/`，见 `deploy/README.md`）：
+- 单主机一键：`compose-prod.yml`（Redis 持久化 + nginx LB + 可扩 app；`--profile ha` 加
+  Redis Sentinel）。`docker compose config` 校验通过。
+- 集群一键：`k8s/` kustomize（base + standard/flagship overlay：Deployment+探针+资源限额、
+  Service、Ingress、HPA、Secret 占位、Redis StatefulSet）。`kubectl kustomize` 两档构建通过、
+  补丁按档生效。
+- HA：`app/store/redis.py` 加 Sentinel 支持（`ARK_REDIS_SENTINELS`，主挂自动切换）；K8s 基线
+  单实例+持久化，HA 升级走 Bitnami/托管 Redis。
+- 机密：compose 走 `deploy/.env`（gitignore）、K8s 走 Secret（生产换 External Secrets/Vault）。
+- **待真环境**：完整 schema 校验、Sentinel 真切换、HPA 真扩缩——需真 K8s 集群/多机。
+
 **目标**：把「单节点一键」升级成「整套一键、且高可用」。
 - Helm chart / Terraform：app 层、Redis、模型服务、Ingress/LB、密钥、TLS、HPA。
 - Redis 高可用（Sentinel/Cluster 或托管），替代单点 SPOF；状态持久化策略。

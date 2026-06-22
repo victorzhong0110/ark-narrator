@@ -24,7 +24,10 @@ def get_store(settings: Settings) -> Store:
         return SQLiteStore(Path(path))
     if kind == "redis":
         from app.store.redis import RedisStore
-        url = os.getenv("ARK_REDIS_URL", "redis://localhost:6379/0")
-        logger.info("使用 RedisStore：%s", url)
-        return RedisStore(url)
+        sentinels = [s.strip() for s in settings.redis_sentinels.split(",") if s.strip()]
+        if sentinels:
+            logger.info("使用 RedisStore（Sentinel HA）：%s master=%s", sentinels, settings.redis_master)
+            return RedisStore(sentinels=sentinels, master=settings.redis_master)
+        logger.info("使用 RedisStore：%s", settings.redis_url)
+        return RedisStore(settings.redis_url)
     raise ValueError(f"未知存储：{settings.store}（应为 memory / sqlite / redis）")
