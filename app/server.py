@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -38,6 +39,7 @@ orchestrator: DialogueOrchestrator | None = None
 settings = load_settings()
 _ready = False
 _sema = asyncio.Semaphore(max(1, settings.max_concurrency))
+_INSTANCE = os.getenv("HOSTNAME") or socket.gethostname()   # 容器内每实例唯一
 
 
 @asynccontextmanager
@@ -72,6 +74,7 @@ async def _observe(request: Request, call_next):
     METRICS.inc("ark_requests_total", {"path": request.url.path, "status": str(resp.status_code)})
     METRICS.observe("ark_request_seconds", dur, {"path": request.url.path})
     resp.headers["X-Request-ID"] = rid
+    resp.headers["X-Served-By"] = _INSTANCE          # 哪个实例处理的（看 LB 是否分散）
     logger.info("rid=%s %s %s %d %.3fs", rid, request.method,
                 request.url.path, resp.status_code, dur)
     return resp

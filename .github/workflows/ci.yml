@@ -16,7 +16,7 @@ jobs:
       - name: Install deps
         run: pip install -r requirements-server.txt ruff pytest httpx
       - name: Lint
-        run: ruff check app tests
+        run: ruff check app bench tests
       - name: Test (含护栏红队 + 角色保真 gate 逻辑 + 接入契约)
         run: pytest -q
 # 注：角色保真评测对「真实模型」的跑分（scripts/eval_character.py）需 GPU/API，

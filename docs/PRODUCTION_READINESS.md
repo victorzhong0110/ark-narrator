@@ -49,7 +49,15 @@
 - **我能做**：Helm/Terraform/K8s manifests、compose-prod、配置化。**需公司**：真集群（K8s/云）、托管 Redis、域名/证书。
 - **Done**：在一个 K8s 集群上一条命令起全栈，Redis 主挂自动切换不丢状态。
 
-## P2 · 生产级推理 + 压测（约 2–4 周）
+## P2 · 生产级推理 + 压测（约 2–4 周）— 代码侧✅（真GPU基准待办）
+**已交付**（`bench/`、`docs/CAPACITY.md`）：
+- 压测 harness `bench/loadtest.py`（吞吐/延迟分布/错误率/LB 分散）。
+- **真起 compose-prod 实测**（3 副本，本机 Docker）：LB 真均匀分到 3 容器、~770 req/s@并发50、
+  超载 429 背压生效、过载优雅降级。响应加 `X-Served-By` 看 LB 分散。
+- 容量模型：生产是模型受限，N=ceil(Q·R/T)；app/LB 层线性扩（已证非瓶颈），模型节点靠 pool 自注册扩。
+- vLLM 无需新代码（OpenAI 兼容，`ARK_BACKEND=api` 指过去即可）。
+- **待真环境**：T（单节点模型吞吐）真 GPU/vLLM 批处理基准、HPA 真扩缩、长时 soak。
+
 **目标**：扛得住并证明扛得住。
 - 模型服务：`mlx_lm.server`（dev）→ **vLLM**（连续批处理/PagedAttention）为云 GPU 主力；
   Mac mini 机队保留 MLX 作私有化/边缘选项。量化与批处理调优到 SLA。
