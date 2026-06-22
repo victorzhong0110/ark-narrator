@@ -58,6 +58,8 @@ class Settings:
     # api 后端（backend=api 时用；OpenAI 兼容：MiniMax/DeepSeek/通义等）
     api_base_url: str = field(default_factory=lambda: os.getenv("ARK_API_BASE_URL", ""))
     api_key: str = field(default_factory=lambda: os.getenv("ARK_API_KEY", ""))
+    # pool 后端（backend=pool）：自注册节点池的组名（Mac 节点心跳注册到这个组）
+    node_group: str = field(default_factory=lambda: os.getenv("ARK_NODE_GROUP", "models"))
 
     # ---- 生成参数 ----
     temperature: float = field(default_factory=lambda: _env_float("ARK_TEMPERATURE", 0.7))

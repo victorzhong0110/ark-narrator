@@ -45,9 +45,9 @@ def build_orchestrator(settings: Settings | None = None) -> DialogueOrchestrator
 
     t3_terms = rules.load_t3_terms(s.lore_dir.parent / "guard" / "politics_t3.txt")
 
-    backend = get_backend(s)
-
     store = get_store(s)
+    backend = get_backend(s, store=store)   # pool 后端靠 store 做节点服务发现
+
     cloud = get_cloud_auditor(s) or DisabledAuditor()
     in_guard = InputGuard(s, t3_terms=t3_terms, store=store)
     out_guard = OutputGuard(

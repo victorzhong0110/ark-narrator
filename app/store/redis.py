@@ -67,3 +67,15 @@ class RedisStore:
     def rate_allow(self, user_id: str, limit: int, window_s: float) -> bool:
         import time
         return fixed_window_allow(self, user_id, limit, window_s, time.time())
+
+    # ---- 服务注册表（有序集合：score=过期时刻，过期自动剔除）----
+    def register_node(self, group: str, addr: str, ttl: float) -> None:
+        import time
+        self._r.zadd(f"nodes:{group}", {addr: time.time() + ttl})
+
+    def live_nodes(self, group: str) -> list[str]:
+        import time
+        now = time.time()
+        key = f"nodes:{group}"
+        self._r.zremrangebyscore(key, 0, now)
+        return sorted(_s(a) for a in self._r.zrangebyscore(key, now, "+inf"))

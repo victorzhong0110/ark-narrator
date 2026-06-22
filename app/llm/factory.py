@@ -10,7 +10,7 @@ from app.llm.base import LLMBackend
 logger = logging.getLogger(__name__)
 
 
-def get_backend(settings: Settings) -> LLMBackend:
+def get_backend(settings: Settings, store=None) -> LLMBackend:
     backend = settings.backend.lower()
     if backend == "scripted":
         from app.llm.scripted_backend import ScriptedBackend
@@ -25,4 +25,11 @@ def get_backend(settings: Settings) -> LLMBackend:
             raise ValueError("api 后端需要 ARK_API_BASE_URL 与 ARK_API_KEY")
         logger.info("使用 APIBackend：%s @ %s", settings.model_path, settings.api_base_url)
         return APIBackend(settings.model_path, settings.api_base_url, settings.api_key)
-    raise ValueError(f"未知后端：{settings.backend}（应为 mlx / api / scripted）")
+    if backend == "pool":
+        from app.llm.pool_backend import PooledAPIBackend
+        if store is None:
+            raise ValueError("pool 后端需要 store（节点服务发现走存储）")
+        logger.info("使用 PooledAPIBackend：组=%s", settings.node_group)
+        return PooledAPIBackend(store, settings.model_path,
+                                group=settings.node_group, api_key=settings.api_key or "EMPTY")
+    raise ValueError(f"未知后端：{settings.backend}（应为 mlx / api / pool / scripted）")

@@ -22,6 +22,7 @@ class InMemoryStore:
         self._mem: dict[tuple[str, str], str] = {}
         self._pair_turns: dict[tuple[str, str], int] = {}
         self._counters: dict[str, tuple[int, float | None]] = {}
+        self._nodes: dict[str, dict[str, float]] = {}   # group → {addr: expire_at}
 
     # ---- 历史 ----
     def append_turn(self, session_id: str, role: str, content: str) -> None:
@@ -71,3 +72,13 @@ class InMemoryStore:
 
     def rate_allow(self, user_id: str, limit: int, window_s: float) -> bool:
         return fixed_window_allow(self, user_id, limit, window_s, self._now())
+
+    # ---- 服务注册表 ----
+    def register_node(self, group: str, addr: str, ttl: float) -> None:
+        self._nodes.setdefault(group, {})[addr] = self._now() + ttl
+
+    def live_nodes(self, group: str) -> list[str]:
+        now = self._now()
+        live = {a: e for a, e in self._nodes.get(group, {}).items() if e > now}
+        self._nodes[group] = live
+        return sorted(live)

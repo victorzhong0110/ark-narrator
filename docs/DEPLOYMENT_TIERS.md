@@ -89,32 +89,28 @@ N 台 ≈ N× 吞吐。**前提是 worker 无状态**——会话历史/长期�
 > 在本地跑（如 70B+ 拆 2-3 台）；延迟更高、更脆，属旗舰自托管的小众选项。**面向多用户服务，
 > 优先副本横向扩展，而非拆单模型。**
 
-### 加一台 Mac：具体步骤
+### 加一台 Mac：一键自动加入（推荐 · 分布式服务发现）
 
-前提（一次性）：①一个共享 Redis（`ARK_STORE=redis`）②一个 LB（`deploy/nginx.example.conf`）。
+前提（一次性）：一个共享 Redis + app 层设 `ARK_BACKEND=pool`、`ARK_STORE=redis`、`ARK_REDIS_URL=...`。
 
-**形态 A（推荐，Mac 当模型节点）**
+**新 Mac 上只跑这一条**：
 ```bash
-# 新 Mac 上：
-pip install mlx-lm
-python -m mlx_lm.server --model mlx-community/Qwen3-8B-4bit --host 0.0.0.0 --port 8080
-# 然后在 LB 的 mlx_model_pool 加一行 server <新Mac-IP>:8080; → nginx -s reload
-# app 层不动、不重启。app 层用 ARK_BACKEND=api、ARK_API_BASE_URL=http://<LB>/v1
+ARK_REDIS_URL=redis://<app/redis主机>:6379/0 bash deploy/join_cluster.sh
 ```
+它会：装依赖 → 起 `mlx_lm.server`（OpenAI 兼容）→ 心跳把本节点地址注册进 Redis。
+app 层的 `PooledAPIBackend` 从 Redis 读活节点列表、客户端侧轮询 + 故障转移——**一个心跳周期内
+自动发现新节点并开始路由，无需改 nginx、无需重启任何东西**。节点掉线（停心跳）→ TTL 过期自动下线。
 
-**形态 B（每台 Mac 跑完整 app）**
-```bash
-# 新 Mac 上：
-git clone <repo> && cd ark-narrator && pip install -r requirements-app.txt
-export ARK_BACKEND=mlx ARK_STORE=redis ARK_REDIS_URL=redis://<redis主机>:6379/0
-uvicorn app.server:app --host 0.0.0.0 --port 8000
-# LB 的 ark_app_pool 加一行 server <新Mac-IP>:8000; → reload
-# 状态在共享 Redis，新机即刻共享会话/长期记忆；LB 用 /readyz 探活
-```
+这是真正的分布式：节点**自注册 + 心跳 TTL**（`deploy/registrar.py`），app 侧**服务发现 + 负载均衡 +
+故障转移**（`app/llm/pool_backend.py`）。开机自启可包一层 launchd。
 
-> 诚实说明：这是架构**设计支持**的路径（Redis 存储、API 后端、mlx_lm.server 兼容、/readyz
-> 探针均已验证），但跨两台物理 Mac 的端到端集群我尚未实测；LB 与 Redis 需自行架设；
-> 每个节点各需下载一份模型权重。
+**备选形态 B（每台 Mac 跑完整 app + nginx）**：见 `deploy/nginx.example.conf`；状态共享在 Redis，
+LB 加一行 `server <新IP>:8000;` + reload，`/readyz` 探活。
+
+> 诚实说明：分布式机制（自注册/发现/轮询/故障转移）已由单测 + 真链路连通验证（`PooledAPIBackend`
+> 成功调用本机真 `mlx_lm.server`）。**未实测的是**：跨多台物理 Mac 的真集群运行；且 `mlx_lm.server`
+> 跑 Qwen3 默认带思考链，需在节点侧关闭思考（配置 chat template / 用非思考模型），否则回复可能为空——
+> 这是模型节点的配置项，与分布式机制无关。每节点各需下载一份模型权重。
 
 ## 升档不改代码
 

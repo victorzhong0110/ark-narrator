@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS pair_turns(
   user_id TEXT, character TEXT, n INTEGER, PRIMARY KEY(user_id, character));
 CREATE TABLE IF NOT EXISTS counters(
   key TEXT PRIMARY KEY, value INTEGER, expire_at REAL);
+CREATE TABLE IF NOT EXISTS nodes(
+  grp TEXT, addr TEXT, expire_at REAL, PRIMARY KEY(grp, addr));
 """
 
 
@@ -111,3 +113,19 @@ class SQLiteStore:
 
     def rate_allow(self, user_id: str, limit: int, window_s: float) -> bool:
         return fixed_window_allow(self, user_id, limit, window_s, self._now())
+
+    def register_node(self, group: str, addr: str, ttl: float) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO nodes VALUES(?,?,?) ON CONFLICT(grp,addr) "
+                "DO UPDATE SET expire_at=excluded.expire_at",
+                (group, addr, self._now() + ttl))
+            self._db.commit()
+
+    def live_nodes(self, group: str) -> list[str]:
+        with self._lock:
+            self._db.execute("DELETE FROM nodes WHERE expire_at<=?", (self._now(),))
+            rows = self._db.execute(
+                "SELECT addr FROM nodes WHERE grp=? ORDER BY addr", (group,)).fetchall()
+            self._db.commit()
+        return [r[0] for r in rows]
