@@ -19,4 +19,10 @@ def get_backend(settings: Settings) -> LLMBackend:
     if backend == "mlx":
         from app.llm.mlx_backend import MLXBackend
         return MLXBackend(settings.model_path, settings.adapter_dir)
-    raise ValueError(f"未知后端：{settings.backend}（应为 mlx 或 scripted）")
+    if backend == "api":
+        from app.llm.api_backend import APIBackend
+        if not settings.api_base_url or not settings.api_key:
+            raise ValueError("api 后端需要 ARK_API_BASE_URL 与 ARK_API_KEY")
+        logger.info("使用 APIBackend：%s @ %s", settings.model_path, settings.api_base_url)
+        return APIBackend(settings.model_path, settings.api_base_url, settings.api_key)
+    raise ValueError(f"未知后端：{settings.backend}（应为 mlx / api / scripted）")

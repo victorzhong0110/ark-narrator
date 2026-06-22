@@ -46,7 +46,7 @@ class Settings:
     """整套服务的只读配置。"""
 
     # ---- 后端 ----
-    # backend: "mlx"（本地真模型）| "scripted"（无需模型，测试/演示管线用）
+    # backend: "mlx"（本地真模型）| "api"（OpenAI 兼容云端）| "scripted"（无需模型，测试/演示）
     backend: str = field(default_factory=lambda: os.getenv("ARK_BACKEND", "mlx"))
     model_path: str = field(
         default_factory=lambda: os.getenv("ARK_MODEL_PATH", "mlx-community/Qwen3-8B-4bit")
@@ -55,6 +55,9 @@ class Settings:
     adapter_dir: str | None = field(
         default_factory=lambda: os.getenv("ARK_ADAPTER_DIR") or None
     )
+    # api 后端（backend=api 时用；OpenAI 兼容：MiniMax/DeepSeek/通义等）
+    api_base_url: str = field(default_factory=lambda: os.getenv("ARK_API_BASE_URL", ""))
+    api_key: str = field(default_factory=lambda: os.getenv("ARK_API_KEY", ""))
 
     # ---- 生成参数 ----
     temperature: float = field(default_factory=lambda: _env_float("ARK_TEMPERATURE", 0.7))
@@ -130,11 +133,14 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    """加载配置（如有 .env 先读入环境）。"""
+    """加载配置。优先级：shell env > .env > 部署档位(ARK_PROFILE) > 硬默认。"""
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(ROOT / ".env")
+        load_dotenv(ROOT / ".env")          # 不覆盖已有 shell env
     except ImportError:
         pass
+    from app.profiles import apply_profile   # 在 .env 之后注入档位默认（setdefault）
+
+    apply_profile(os.getenv("ARK_PROFILE", ""))
     return Settings()
