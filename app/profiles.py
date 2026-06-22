@@ -24,6 +24,7 @@ PROFILES: dict[str, dict[str, str]] = {
         "ARK_SCENE_TAGGER": "heuristic",       # 省一次 LLM 调用
         "ARK_CLOUD_AUDIT": "true",
         "ARK_CLOUD_AUDIT_PROVIDER": "mock",     # 上线换 http/aliyun
+        "ARK_STORE": "sqlite",                  # 单机持久
         "ARK_MAX_TOKENS": "240",
         "ARK_RAG_TOP_K": "3",
     },
@@ -33,6 +34,7 @@ PROFILES: dict[str, dict[str, str]] = {
         "ARK_SCENE_TAGGER": "llm",
         "ARK_CLOUD_AUDIT": "true",
         "ARK_CLOUD_AUDIT_PROVIDER": "http",
+        "ARK_STORE": "redis",                   # 多 worker 共享
         "ARK_MAX_TOKENS": "320",
         "ARK_RAG_TOP_K": "3",
     },
@@ -42,6 +44,7 @@ PROFILES: dict[str, dict[str, str]] = {
         "ARK_SCENE_TAGGER": "llm",
         "ARK_CLOUD_AUDIT": "true",
         "ARK_CLOUD_AUDIT_PROVIDER": "aliyun",
+        "ARK_STORE": "redis",
         "ARK_MAX_TOKENS": "400",
         "ARK_RAG_TOP_K": "4",
     },

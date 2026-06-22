@@ -16,9 +16,12 @@ from app.guard.input_guard import InputGuard
 from app.guard.output_guard import OutputGuard
 from app.llm.base import LLMBackend, Message
 from app.logging_store import AuditLog
+from app.memory import MemoryManager
 from app.rag.retriever import Retriever, render_lore_block
 from app.registers import REGISTER_LABEL, Register
 from app.scene import HeuristicSceneTagger, SceneTagger
+from app.store.base import Store
+from app.store.memory import InMemoryStore
 from app.world import DEFAULT_WORLD, WorldProfile
 
 logger = logging.getLogger(__name__)
@@ -49,6 +52,8 @@ class DialogueOrchestrator:
         audit_log: AuditLog,
         scene_tagger: SceneTagger | None = None,
         world: WorldProfile = DEFAULT_WORLD,
+        store: Store | None = None,
+        memory_manager: MemoryManager | None = None,
     ):
         self._s = settings
         self._backend = backend
@@ -59,19 +64,30 @@ class DialogueOrchestrator:
         self._log = audit_log
         self._scene = scene_tagger or HeuristicSceneTagger()
         self._world = world
+        self._store = store or InMemoryStore()
+        self._memory = memory_manager
         self._fallback_idx: dict[str, int] = defaultdict(int)
 
     @property
     def characters(self) -> dict[str, CharacterCard]:
         return self._chars
 
-    def _next_fallback_idx(self, session_id: str) -> int:
+    def _fb_peek(self, session_id: str) -> int:
+        if self._store is not None:
+            return self._store.get_int(f"fb:{session_id}")
+        return self._fallback_idx[session_id]
+
+    def _fb_next(self, session_id: str) -> int:
+        """返回当前可用的兜底序号，并自增供下次用。"""
+        if self._store is not None:
+            return self._store.incr(f"fb:{session_id}", 1) - 1
         i = self._fallback_idx[session_id]
         self._fallback_idx[session_id] = i + 1
         return i
 
     def _build_system(
-        self, card: CharacterCard, query: str, history: list[Message]
+        self, card: CharacterCard, query: str, history: list[Message],
+        memory_block: str = "",
     ) -> tuple[str, Register]:
         register = self._scene.tag(query, history)
         lore_block = ""
@@ -96,7 +112,9 @@ class DialogueOrchestrator:
         register_block = ""
         if parts:
             register_block = f"【当前对话氛围：{REGISTER_LABEL[register]}】\n" + "\n".join(parts)
-        system = render_system_prompt(card, lore_block, register_block, world=self._world)
+        system = render_system_prompt(
+            card, lore_block, register_block, world=self._world, memory_block=memory_block,
+        )
         return system, register
 
     def _trim_history(self, history: list[Message]) -> list[Message]:
@@ -131,7 +149,7 @@ class DialogueOrchestrator:
             elif decision.too_long:
                 text = _TOO_LONG_MSG
             else:
-                idx = self._next_fallback_idx(session_id)
+                idx = self._fb_next(session_id)
                 text = choose_fallback(card, v.category, idx)
             self._log.record({
                 "stage": "input", "session": session_id, "user": user_id,
@@ -144,8 +162,9 @@ class DialogueOrchestrator:
                          category=v.category.value, ai_label=self._s.ai_label,
                          meta={"stage": "input"})
 
-        # 2) 拼 system prompt（角色卡 + RAG lore + 当前语气档位示范）
-        system, register = self._build_system(card, message, history)
+        # 2) 拼 system prompt（角色卡 + RAG lore + 语气档位 + 长期记忆）
+        memory_block = self._memory.get(user_id, character) if self._memory else ""
+        system, register = self._build_system(card, message, history, memory_block)
         msgs: list[Message] = list(self._trim_history(history))
         msgs.append({"role": "user", "content": message})
 
@@ -166,10 +185,10 @@ class DialogueOrchestrator:
                          ai_label=self._s.ai_label, meta={"stage": "generate_error"})
 
         # 4) 出口护栏 ★
-        idx = self._fallback_idx[session_id]
+        idx = self._fb_peek(session_id)
         result = self._out.check(message, draft, card, fallback_index=idx)
         if result.blocked:
-            self._next_fallback_idx(session_id)
+            self._fb_next(session_id)
 
         # 5) 审计
         self._log.record({
@@ -182,6 +201,16 @@ class DialogueOrchestrator:
             "reason": result.verdict.reason,
             "risk": decision.risk_score,
         })
+
+        # 6) 持久化对话 + 滚动更新长期记忆（让她跨会话记得这位玩家）
+        self._store.append_turn(session_id, "user", message)
+        self._store.append_turn(session_id, "assistant", result.text)
+        if self._memory is not None:
+            recent = list(self._trim_history(history)) + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": result.text},
+            ]
+            self._memory.observe(user_id, character, recent)
 
         return Reply(
             text=result.text, character=character, blocked=result.blocked,

@@ -66,8 +66,9 @@ perf/瓦、perf/元都强，体积小、能耗低（满载约数十瓦）、安�
             Redis(会话/限流) + Postgres(对话历史/长期记忆)   ← 工作流 B
 ```
 
-N 台 ≈ N× 吞吐。**前提是 worker 无状态**——这正是工作流 B（把会话/记忆/限流外置到 Redis/Postgres）
-要解决的；做完 B，加一台 mini 就是加一份吞吐。
+N 台 ≈ N× 吞吐。**前提是 worker 无状态**——会话历史/长期记忆/限流/会话风险都已外置到可插拔
+存储（`app/store/`：memory / sqlite / **redis**），用 `ARK_STORE=redis` 多机共享即可，加一台 mini
+就是加一份吞吐。（Postgres 等更重的持久层可作为 redis 之外的选项后续接入。）
 
 ### 两种接法（都已被现有代码支持）
 

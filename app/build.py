@@ -12,10 +12,12 @@ from app.guard.input_guard import InputGuard
 from app.guard.output_guard import OutputGuard
 from app.llm.factory import get_backend
 from app.logging_store import AuditLog
+from app.memory import MemoryManager
 from app.orchestrator import DialogueOrchestrator
 from app.rag.retriever import LexicalRetriever
 from app.rag.store import load_lore
 from app.scene import get_scene_tagger
+from app.store import get_store
 from app.world import WorldProfile, load_world
 
 logger = logging.getLogger(__name__)
@@ -45,20 +47,24 @@ def build_orchestrator(settings: Settings | None = None) -> DialogueOrchestrator
 
     backend = get_backend(s)
 
+    store = get_store(s)
     cloud = get_cloud_auditor(s) or DisabledAuditor()
-    in_guard = InputGuard(s, t3_terms=t3_terms)
+    in_guard = InputGuard(s, t3_terms=t3_terms, store=store)
     out_guard = OutputGuard(
         s, system_markers=_system_markers(world), t3_terms=t3_terms, cloud_auditor=cloud
     )
     audit = AuditLog(s.audit_log_path)
     scene_tagger = get_scene_tagger(s, backend)
+    memory = MemoryManager(
+        backend, store, every=s.memory_every, max_chars=s.memory_max_chars
+    )
 
     logger.info(
-        "编排就绪：IP=%s 后端=%s 角色=%d lore=%d T3词=%d 云端审核=%s RAG=%s 场景判定=%s",
-        world.work, backend.label, len(characters), len(chunks), len(t3_terms),
-        getattr(cloud, "name", "?"), s.rag_enabled, s.scene_tagger,
+        "编排就绪：IP=%s 后端=%s 存储=%s 角色=%d lore=%d 云端审核=%s 场景判定=%s 记忆/%d轮",
+        world.work, backend.label, s.store, len(characters), len(chunks),
+        getattr(cloud, "name", "?"), s.scene_tagger, s.memory_every,
     )
     return DialogueOrchestrator(
         s, backend, retriever, characters, in_guard, out_guard, audit,
-        scene_tagger=scene_tagger, world=world,
+        scene_tagger=scene_tagger, world=world, store=store, memory_manager=memory,
     )

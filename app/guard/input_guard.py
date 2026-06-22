@@ -42,30 +42,47 @@ class InputDecision:
     signals: tuple[str, ...] = field(default_factory=tuple)
 
 
+_RISK_TTL = 3600.0   # 会话风险计分的存活时间（秒）
+
+
 class InputGuard:
-    def __init__(self, settings: Settings, t3_terms: tuple[str, ...] = ()):
+    def __init__(self, settings: Settings, t3_terms: tuple[str, ...] = (), store=None):
         self._s = settings
         self._t3 = t3_terms
+        self._store = store                                     # 有则无状态；无则进程内兜底
         self._hits: dict[str, list[float]] = defaultdict(list)   # user_id → 请求时间戳
         self._risk: dict[str, int] = defaultdict(int)            # session_id → 累积风险
 
     # ---- 限流 ----
     def _rate_limited(self, user_id: str, now: float) -> bool:
+        if self._store is not None:
+            return not self._store.rate_allow(user_id, self._s.rate_limit_per_min, 60.0)
         window = self._hits[user_id]
         cutoff = now - 60.0
-        # 原地裁剪旧时间戳
-        kept = [t for t in window if t >= cutoff]
+        kept = [t for t in window if t >= cutoff]   # 原地裁剪旧时间戳
         self._hits[user_id] = kept
         if len(kept) >= self._s.rate_limit_per_min:
             return True
         kept.append(now)
         return False
 
+    # ---- 会话风险（有 store 走 store，跨 worker 共享）----
+    def _add_risk(self, session_id: str, delta: int) -> int:
+        if self._store is not None:
+            return self._store.incr(f"risk:{session_id}", delta, ttl=_RISK_TTL)
+        self._risk[session_id] += delta
+        return self._risk[session_id]
+
     def session_risk(self, session_id: str) -> int:
+        if self._store is not None:
+            return self._store.get_int(f"risk:{session_id}")
         return self._risk.get(session_id, 0)
 
     def reset_session(self, session_id: str) -> None:
-        self._risk.pop(session_id, None)
+        if self._store is not None:
+            self._store.delete(f"risk:{session_id}")
+        else:
+            self._risk.pop(session_id, None)
 
     def check(self, user_id: str, session_id: str, text: str) -> InputDecision:
         now = time.monotonic()
@@ -97,29 +114,29 @@ class InputGuard:
         # 3) 内容扫描 → 最高危类别硬熔断
         content = rules.to_input_verdict(rules.scan_content(text, self._t3))
         if content.action == Action.HARD_CUTOFF:
-            self._risk[session_id] += 3
+            risk = self._add_risk(session_id, 3)
             return InputDecision(
                 proceed=False, verdict=content,
-                risk_score=self._risk[session_id], signals=("content_hard_cutoff",),
+                risk_score=risk, signals=("content_hard_cutoff",),
             )
         if content.category in (
             RiskCategory.POLITICS_T1, RiskCategory.POLITICS_T2,
         ):
-            self._risk[session_id] += _RISK_POLITICS
+            self._add_risk(session_id, _RISK_POLITICS)
             signals.append(f"politics:{content.category.value}")
 
         # 4) 注入特征
         inj = rules.detect_injection(text)
         if not inj.allowed:
-            self._risk[session_id] += _RISK_INJECTION
+            self._add_risk(session_id, _RISK_INJECTION)
             signals.append("injection")
 
         # 5) 编码 / 混淆
         if rules.looks_obfuscated(text):
-            self._risk[session_id] += _RISK_OBFUSCATION
+            self._add_risk(session_id, _RISK_OBFUSCATION)
             signals.append("obfuscation")
 
-        risk = self._risk[session_id]
+        risk = self.session_risk(session_id)
 
         # 6) 会话风险超阈值 → 冷却（多轮温水煮防御）
         if risk >= self._s.session_risk_threshold:

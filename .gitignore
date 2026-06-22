@@ -25,6 +25,10 @@ checkpoints/
 logs/
 *.jsonl.log
 
+# 运行时状态存储（会话/记忆，含用户数据，勿入库）
+data/state.sqlite*
+*.sqlite
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints

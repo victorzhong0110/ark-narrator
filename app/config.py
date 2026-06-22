@@ -109,6 +109,14 @@ class Settings:
         default_factory=lambda: os.getenv("ARK_SCENE_TAGGER", "llm")
     )
 
+    # ---- 状态存储：memory（单机）| sqlite（单机持久）| redis（多 worker 共享）----
+    store: str = field(default_factory=lambda: os.getenv("ARK_STORE", "memory"))
+    # 长期记忆：每 N 轮 用户×角色 对话滚动摘要一次；上限字数
+    memory_every: int = field(default_factory=lambda: _env_int("ARK_MEMORY_EVERY", 6))
+    memory_max_chars: int = field(
+        default_factory=lambda: _env_int("ARK_MEMORY_MAX_CHARS", 600)
+    )
+
     # ---- 路径 ----
     characters_dir: Path = field(
         default_factory=lambda: ROOT / os.getenv("ARK_CHARACTERS_DIR", "data/characters")

@@ -69,8 +69,9 @@ def render_system_prompt(
     lore_block: str = "",
     register_block: str = "",
     world: WorldProfile = DEFAULT_WORLD,
+    memory_block: str = "",
 ) -> str:
-    """把角色卡 + RAG lore + 当前语气档位示范，渲染成完整 system prompt。"""
+    """把角色卡 + RAG lore + 当前语气档位示范 + 长期记忆，渲染成完整 system prompt。"""
     parts: list[str] = [f"你正在扮演{world.work}{world.role_term}「{card.name}」。"]
 
     profile_bits: list[str] = []
@@ -97,6 +98,12 @@ def render_system_prompt(
         parts.append(
             "以下是与当前话题相关的泰拉世界观资料，回答时优先依据它、不要编造：\n"
             f"{lore_block.strip()}"
+        )
+
+    if memory_block.strip():
+        parts.append(
+            "你还记得关于这位玩家的事（自然地体现出你记得，不要生硬复述）：\n"
+            f"{memory_block.strip()}"
         )
 
     parts.append(
