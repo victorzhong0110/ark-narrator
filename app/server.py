@@ -377,7 +377,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "app.server:app",
-        host=os.getenv("API_HOST", "0.0.0.0"),
+        host=os.getenv("API_HOST", "0.0.0.0"),  # nosec B104 — 容器内须绑全网卡，前置 LB/Ingress
         port=int(os.getenv("API_PORT", "8000")),
         reload=False,
     )

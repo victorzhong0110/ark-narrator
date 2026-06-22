@@ -92,7 +92,8 @@
 - 安全响应头（nosniff / X-Frame-Options DENY / Referrer-Policy / HSTS）+ 请求体大小上限(413)。
 - 云端审核：http 网关 + 厂商 SDK 骨架（工作流 A 已做，填 key 即生效）。
 - 密钥：K8s Secret / compose .env（工作流 P1，生产换 External Secrets/Vault）。
-- 渗透自评见下方「安全自评」。
+- **渗透自评**（`docs/SECURITY_ASSESSMENT.md`）：SAST(bandit High0/Med0)、依赖(pip-audit 0 CVE)、
+  活体 API 渗透(`bench/pentest.py` 10/10 PASS：鉴权绕过/安全头/超大体/注入不崩/护栏/不泄露/限流)。
 - **需公司/组织**：备案 + AI 标识办法法务流程、第三方渗透测试、云审真凭证、安全评审、内部 mTLS。
 
 **目标**：达到中国商用上线的安全合规线。

@@ -186,7 +186,9 @@ class CachingAuditor:
 
     @staticmethod
     def _key(user_text: str, draft: str) -> str:
-        return hashlib.sha1(f"{user_text}{draft}".encode()).hexdigest()  # noqa: S324
+        # 仅作缓存去重 key，非安全用途
+        return hashlib.sha1(  # noqa: S324
+            f"{user_text}\n{draft}".encode(), usedforsecurity=False).hexdigest()
 
     def audit(self, user_text: str, draft: str) -> Verdict:
         key = self._key(user_text, draft)
