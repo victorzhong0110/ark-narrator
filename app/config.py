@@ -132,6 +132,18 @@ class Settings:
         default_factory=lambda: ROOT / os.getenv("ARK_WORLD_CONFIG", "data/world.yaml")
     )
 
+    # ---- 生产服务（C）----
+    # API 鉴权 key：留空=不鉴权；设了则 /chat /stream 需带 X-API-Key
+    api_auth_key: str = field(default_factory=lambda: os.getenv("ARK_API_AUTH_KEY", ""))
+    # CORS 允许来源（逗号分隔；默认 * 仅便于本地，上线务必收紧）
+    cors_origins: str = field(default_factory=lambda: os.getenv("ARK_CORS_ORIGINS", "*"))
+    # 单实例并发上限（单模型不能无限并发；超过即 429）
+    max_concurrency: int = field(default_factory=lambda: _env_int("ARK_MAX_CONCURRENCY", 8))
+    # 单次请求超时（秒）；超时返回 504，避免卡死请求堆积
+    request_timeout: float = field(
+        default_factory=lambda: _env_float("ARK_REQUEST_TIMEOUT", 60.0)
+    )
+
     # ---- 合规：AI 标识 ----
     ai_label: str = field(
         default_factory=lambda: os.getenv(

@@ -1,0 +1,10 @@
+# 容器/服务端依赖（不含 mlx-lm —— MLX 仅 Apple Silicon，容器走 api 后端；
+# 本地 MLX/budget 档在 Mac 原生跑，见 docs/DEPLOYMENT_TIERS.md）。
+fastapi>=0.110.0
+uvicorn>=0.29.0
+sse-starlette>=2.0.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+openai>=1.14.0      # api 后端
+redis>=5.0.0        # redis 存储（多 worker 共享）

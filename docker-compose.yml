@@ -1,0 +1,29 @@
+# standard 档参考编排：N 个无状态 app 实例 + 共享 Redis。
+# 横向扩展：docker compose up --scale app=3（前面再挂一个 nginx/LB 做均衡）。
+# 真实模型由 ARK_API_BASE_URL/KEY 指向你的推理服务（自托管 vLLM、Mac mini 机队、或云 API）。
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      ARK_BACKEND: api
+      ARK_MODEL_PATH: ${ARK_MODEL_PATH:-your-model}
+      ARK_API_BASE_URL: ${ARK_API_BASE_URL:-}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      ARK_STORE: redis
+      ARK_REDIS_URL: redis://redis:6379/0
+      ARK_SCENE_TAGGER: llm
+      ARK_CLOUD_AUDIT: "true"
+      ARK_CLOUD_AUDIT_PROVIDER: ${ARK_CLOUD_AUDIT_PROVIDER:-http}
+      ARK_CLOUD_AUDIT_ENDPOINT: ${ARK_CLOUD_AUDIT_ENDPOINT:-}
+      ARK_API_AUTH_KEY: ${ARK_API_AUTH_KEY:-}
+      ARK_CORS_ORIGINS: ${ARK_CORS_ORIGINS:-*}
+      ARK_MAX_CONCURRENCY: ${ARK_MAX_CONCURRENCY:-8}
+    depends_on:
+      - redis
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

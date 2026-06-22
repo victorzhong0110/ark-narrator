@@ -16,37 +16,96 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.build import build_orchestrator
 from app.config import load_settings
-from app.orchestrator import DialogueOrchestrator
+from app.metrics import METRICS
+from app.orchestrator import DialogueOrchestrator, Reply
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 orchestrator: DialogueOrchestrator | None = None
 settings = load_settings()
+_ready = False
+_sema = asyncio.Semaphore(max(1, settings.max_concurrency))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global orchestrator
+    global orchestrator, _ready
     orchestrator = build_orchestrator(settings)
+    _ready = True
     yield
+    _ready = False
 
 
 app = FastAPI(title="ArkNarrator 干员对话", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=["*"] if settings.cors_origins.strip() == "*"
+    else [o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_methods=["*"], allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _observe(request: Request, call_next):
+    rid = uuid.uuid4().hex[:8]
+    start = time.perf_counter()
+    try:
+        resp = await call_next(request)
+    except Exception:
+        METRICS.inc("ark_requests_total", {"path": request.url.path, "status": "500"})
+        logger.exception("rid=%s %s %s 未捕获异常", rid, request.method, request.url.path)
+        raise
+    dur = time.perf_counter() - start
+    METRICS.inc("ark_requests_total", {"path": request.url.path, "status": str(resp.status_code)})
+    METRICS.observe("ark_request_seconds", dur, {"path": request.url.path})
+    resp.headers["X-Request-ID"] = rid
+    logger.info("rid=%s %s %s %d %.3fs", rid, request.method,
+                request.url.path, resp.status_code, dur)
+    return resp
+
+
+async def require_auth(x_api_key: str | None = Header(default=None)):
+    """设了 ARK_API_AUTH_KEY 才启用；否则放行。"""
+    if settings.api_auth_key and x_api_key != settings.api_auth_key:
+        METRICS.inc("ark_auth_fail_total")
+        raise HTTPException(401, "缺少或错误的 API key")
+
+
+async def _bounded_respond(session_id: str, user_id: str, character: str,
+                           message: str, history: list[dict]) -> Reply:
+    """并发上限 + 超时：满了 429，超时 504，避免单模型被打爆/卡死。"""
+    try:
+        await asyncio.wait_for(_sema.acquire(), timeout=0.05)
+    except asyncio.TimeoutError:
+        METRICS.inc("ark_overloaded_total")
+        raise HTTPException(429, "服务繁忙，请稍后再试") from None
+    try:
+        reply = await asyncio.wait_for(
+            asyncio.to_thread(orchestrator.respond, session_id, user_id,
+                              character, message, history),
+            timeout=settings.request_timeout,
+        )
+    except asyncio.TimeoutError:
+        METRICS.inc("ark_timeout_total")
+        raise HTTPException(504, "生成超时，请重试") from None
+    finally:
+        _sema.release()
+    if reply.blocked:
+        METRICS.inc("ark_blocked_total", {"category": reply.category})
+    return reply
 
 
 class Turn(BaseModel):
@@ -65,6 +124,26 @@ def _ids(req: ChatRequest, request: Request) -> tuple[str, str]:
     session_id = req.session_id or str(uuid.uuid4())
     user_id = request.client.host if request.client else "anon"
     return session_id, user_id
+
+
+@app.get("/livez")
+async def livez():
+    """存活探针：进程在就行（LB 用）。"""
+    return {"status": "alive"}
+
+
+@app.get("/readyz")
+async def readyz():
+    """就绪探针：编排已装配才算 ready（LB 据此放流量）。"""
+    if not _ready or orchestrator is None:
+        raise HTTPException(503, "not ready")
+    return {"status": "ready"}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics():
+    """Prometheus 抓取端点。"""
+    return METRICS.render()
 
 
 @app.get("/health")
@@ -87,17 +166,15 @@ async def characters():
     }
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(require_auth)])
 async def chat(req: ChatRequest, request: Request):
-    if orchestrator is None:
+    if not _ready or orchestrator is None:
         raise HTTPException(503, "未就绪")
     if req.character not in orchestrator.characters:
         raise HTTPException(400, f"未知干员：{req.character}")
     session_id, user_id = _ids(req, request)
     history = [{"role": t.role, "content": t.content} for t in req.history]
-    reply = await asyncio.to_thread(
-        orchestrator.respond, session_id, user_id, req.character, req.message, history
-    )
+    reply = await _bounded_respond(session_id, user_id, req.character, req.message, history)
     return {
         "character": reply.character, "response": reply.text,
         "blocked": reply.blocked, "category": reply.category,
@@ -105,9 +182,9 @@ async def chat(req: ChatRequest, request: Request):
     }
 
 
-@app.post("/stream")
+@app.post("/stream", dependencies=[Depends(require_auth)])
 async def stream(req: ChatRequest, request: Request):
-    if orchestrator is None:
+    if not _ready or orchestrator is None:
         raise HTTPException(503, "未就绪")
     if req.character not in orchestrator.characters:
         raise HTTPException(400, f"未知干员：{req.character}")
@@ -115,9 +192,7 @@ async def stream(req: ChatRequest, request: Request):
     history = [{"role": t.role, "content": t.content} for t in req.history]
 
     # 先完整生成 + 审核（守出口），再把安全文本逐字推送
-    reply = await asyncio.to_thread(
-        orchestrator.respond, session_id, user_id, req.character, req.message, history
-    )
+    reply = await _bounded_respond(session_id, user_id, req.character, req.message, history)
 
     async def gen():
         for ch in reply.text:
