@@ -145,9 +145,24 @@ class Settings:
         default_factory=lambda: ROOT / os.getenv("ARK_WORLD_CONFIG", "data/world.yaml")
     )
 
-    # ---- 生产服务（C）----
-    # API 鉴权 key：留空=不鉴权；设了则 /chat /stream 需带 X-API-Key
+    # ---- 生产服务（C）+ 鉴权（P4）----
+    # 鉴权模式：none | apikey（X-API-Key）| jwt（Authorization: Bearer，验签后取 player_id）
+    # 留空时：设了 ARK_API_AUTH_KEY 则按 apikey，否则 none（向后兼容）
+    auth_mode: str = field(default_factory=lambda: os.getenv("ARK_AUTH_MODE", ""))
+    jwt_secret: str = field(default_factory=lambda: os.getenv("ARK_JWT_SECRET", ""))
+    max_body_bytes: int = field(default_factory=lambda: _env_int("ARK_MAX_BODY_BYTES", 65536))
+    # API 鉴权 key（apikey 模式）：设了则 /chat /stream 需带 X-API-Key
     api_auth_key: str = field(default_factory=lambda: os.getenv("ARK_API_AUTH_KEY", ""))
+
+    @property
+    def effective_auth_mode(self) -> str:
+        if self.auth_mode:
+            return self.auth_mode.lower()
+        if self.jwt_secret:
+            return "jwt"
+        if self.api_auth_key:
+            return "apikey"
+        return "none"
     # CORS 允许来源（逗号分隔；默认 * 仅便于本地，上线务必收紧）
     cors_origins: str = field(default_factory=lambda: os.getenv("ARK_CORS_ORIGINS", "*"))
     # 单实例并发上限（单模型不能无限并发；超过即 429）

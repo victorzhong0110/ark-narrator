@@ -21,7 +21,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
@@ -62,9 +62,21 @@ app.add_middleware(
 )
 
 
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+}
+
+
 @app.middleware("http")
 async def _observe(request: Request, call_next):
     rid = uuid.uuid4().hex[:8]
+    # 请求体大小上限（防超大 payload 打爆）
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > settings.max_body_bytes:
+        return PlainTextResponse("请求体过大", status_code=413)
     start = time.perf_counter()
     try:
         resp = await call_next(request)
@@ -77,16 +89,35 @@ async def _observe(request: Request, call_next):
     METRICS.observe("ark_request_seconds", dur, {"path": request.url.path})
     resp.headers["X-Request-ID"] = rid
     resp.headers["X-Served-By"] = _INSTANCE          # 哪个实例处理的（看 LB 是否分散）
+    for k, v in _SECURITY_HEADERS.items():
+        resp.headers.setdefault(k, v)
     logger.info("rid=%s %s %s %d %.3fs", rid, request.method,
                 request.url.path, resp.status_code, dur)
     return resp
 
 
-async def require_auth(x_api_key: str | None = Header(default=None)):
-    """设了 ARK_API_AUTH_KEY 才启用；否则放行。"""
-    if settings.api_auth_key and x_api_key != settings.api_auth_key:
-        METRICS.inc("ark_auth_fail_total")
-        raise HTTPException(401, "缺少或错误的 API key")
+async def require_auth(request: Request):
+    """none / apikey(X-API-Key) / jwt(Bearer，验签后取 player_id) 三模式。"""
+    mode = settings.effective_auth_mode
+    if mode == "none":
+        return
+    if mode == "apikey":
+        if request.headers.get("x-api-key") != settings.api_auth_key:
+            METRICS.inc("ark_auth_fail_total")
+            raise HTTPException(401, "缺少或错误的 API key")
+        return
+    if mode == "jwt":
+        from app.auth import verify_jwt
+        authz = request.headers.get("authorization", "")
+        token = authz[7:].strip() if authz[:7].lower() == "bearer " else ""
+        claims = verify_jwt(token, settings.jwt_secret) if token else None
+        if not claims:
+            METRICS.inc("ark_auth_fail_total")
+            raise HTTPException(401, "无效或过期的令牌")
+        pid = claims.get("player_id") or claims.get("sub")
+        if pid:
+            request.state.player_id = str(pid)   # 信任签发的玩家身份（优先于 body）
+        return
 
 
 async def _bounded_respond(session_id: str, user_id: str, character: str,
@@ -135,8 +166,9 @@ class ChatRequest(BaseModel):
 
 
 def _ids(req: ChatRequest, request: Request) -> tuple[str, str]:
-    # player_id 优先（游戏侧玩家身份）；缺省退回来源 IP
-    user_id = req.player_id or (request.client.host if request.client else "anon")
+    # 优先用 JWT 验签后的 player_id（最可信）→ 其次 body 的 player_id → 最后来源 IP
+    user_id = (getattr(request.state, "player_id", None)
+               or req.player_id or (request.client.host if request.client else "anon"))
     # 默认每个 玩家×干员 一条会话，历史/记忆自然隔离
     session_id = req.session_id or f"{user_id}:{req.character}"
     return session_id, user_id
