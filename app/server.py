@@ -119,15 +119,21 @@ class Turn(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    player_id: str | None = Field(
+        None, description="游戏侧玩家ID（强烈建议传）。长期记忆/会话按它隔离；不传则退回按来源IP")
     character: str = Field(..., description="干员名，例如 '阿米娅'")
-    message: str = Field(..., description="用户本轮发言")
-    history: list[Turn] = Field(default_factory=list)
-    session_id: str | None = None
+    message: str = Field(..., description="玩家本轮发言")
+    session_id: str | None = Field(
+        None, description="会话线程ID。不传则默认每个(玩家×干员)一条会话")
+    history: list[Turn] = Field(
+        default_factory=list, description="可选。不传则服务端用 store 托管历史（薄客户端推荐）")
 
 
 def _ids(req: ChatRequest, request: Request) -> tuple[str, str]:
-    session_id = req.session_id or str(uuid.uuid4())
-    user_id = request.client.host if request.client else "anon"
+    # player_id 优先（游戏侧玩家身份）；缺省退回来源 IP
+    user_id = req.player_id or (request.client.host if request.client else "anon")
+    # 默认每个 玩家×干员 一条会话，历史/记忆自然隔离
+    session_id = req.session_id or f"{user_id}:{req.character}"
     return session_id, user_id
 
 
@@ -159,6 +165,7 @@ async def health():
             "characters": len(orchestrator.characters)}
 
 
+@app.get("/v1/characters")
 @app.get("/characters")
 async def characters():
     if orchestrator is None:
@@ -171,6 +178,12 @@ async def characters():
     }
 
 
+def _history_arg(req: ChatRequest):
+    # 调用方传了历史就用它；否则 None → 服务端用 store 托管该会话历史
+    return [{"role": t.role, "content": t.content} for t in req.history] or None
+
+
+@app.post("/v1/chat", dependencies=[Depends(require_auth)])
 @app.post("/chat", dependencies=[Depends(require_auth)])
 async def chat(req: ChatRequest, request: Request):
     if not _ready or orchestrator is None:
@@ -178,15 +191,17 @@ async def chat(req: ChatRequest, request: Request):
     if req.character not in orchestrator.characters:
         raise HTTPException(400, f"未知干员：{req.character}")
     session_id, user_id = _ids(req, request)
-    history = [{"role": t.role, "content": t.content} for t in req.history]
-    reply = await _bounded_respond(session_id, user_id, req.character, req.message, history)
+    reply = await _bounded_respond(session_id, user_id, req.character, req.message,
+                                   _history_arg(req))
     return {
         "character": reply.character, "response": reply.text,
         "blocked": reply.blocked, "category": reply.category,
         "ai_label": reply.ai_label, "session_id": session_id,
+        "request_id": uuid.uuid4().hex[:12],
     }
 
 
+@app.post("/v1/stream", dependencies=[Depends(require_auth)])
 @app.post("/stream", dependencies=[Depends(require_auth)])
 async def stream(req: ChatRequest, request: Request):
     if not _ready or orchestrator is None:
@@ -194,10 +209,10 @@ async def stream(req: ChatRequest, request: Request):
     if req.character not in orchestrator.characters:
         raise HTTPException(400, f"未知干员：{req.character}")
     session_id, user_id = _ids(req, request)
-    history = [{"role": t.role, "content": t.content} for t in req.history]
 
     # 先完整生成 + 审核（守出口），再把安全文本逐字推送
-    reply = await _bounded_respond(session_id, user_id, req.character, req.message, history)
+    reply = await _bounded_respond(session_id, user_id, req.character, req.message,
+                                   _history_arg(req))
 
     async def gen():
         for ch in reply.text:

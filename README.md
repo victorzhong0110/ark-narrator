@@ -36,8 +36,9 @@ ARK_BACKEND=scripted python -m app.server   # 不下模型即可跑通整条链�
 python -m pytest                            # 65 项回归用例（护栏红队 + 接入契约 + 语气路由）
 ```
 
-文档：引擎 **[docs/DIALOGUE_PRODUCT.md](docs/DIALOGUE_PRODUCT.md)** · 接入 **[docs/INTEGRATION.md](docs/INTEGRATION.md)** ·
-干员复刻流程 **[docs/OPERATOR_PIPELINE.md](docs/OPERATOR_PIPELINE.md)**。四层纵深防御完整落地两份安全设计文档。下方为原微调研究记录。
+文档：引擎 **[DIALOGUE_PRODUCT](docs/DIALOGUE_PRODUCT.md)** · 接入数据 **[INTEGRATION](docs/INTEGRATION.md)** ·
+**接口契约 [API](docs/API.md)**（`/v1`+player_id+服务端托管历史）· 干员复刻 **[OPERATOR_PIPELINE](docs/OPERATOR_PIPELINE.md)** ·
+部署 **[DEPLOYMENT_TIERS](docs/DEPLOYMENT_TIERS.md)** / **[deploy/](deploy/README.md)** · 生产就绪 **[PRODUCTION_READINESS](docs/PRODUCTION_READINESS.md)**。下方为原微调研究记录。
 
 ---
 

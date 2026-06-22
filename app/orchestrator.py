@@ -121,6 +121,12 @@ class DialogueOrchestrator:
         limit = self._s.max_history_turns * 2  # user+assistant 成对
         return history[-limit:] if limit > 0 else history
 
+    def _stored_history(self, session_id: str) -> list[Message]:
+        """服务端托管历史：从 store 取该会话最近若干轮（游戏不传历史时用）。"""
+        limit = self._s.max_history_turns * 2
+        return [{"role": t.role, "content": t.content}
+                for t in self._store.history(session_id, limit)]
+
     def respond(
         self,
         session_id: str,
@@ -129,7 +135,9 @@ class DialogueOrchestrator:
         message: str,
         history: list[Message] | None = None,
     ) -> Reply:
-        history = history or []
+        # history 不传（None）→ 服务端从 store 托管；传了（含空列表）→ 用调用方给的
+        if history is None:
+            history = self._stored_history(session_id)
         card = self._chars.get(character)
         if card is None:
             return Reply(
