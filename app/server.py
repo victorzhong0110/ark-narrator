@@ -42,10 +42,21 @@ _sema = asyncio.Semaphore(max(1, settings.max_concurrency))
 _INSTANCE = os.getenv("HOSTNAME") or socket.gethostname()   # 容器内每实例唯一
 
 
+def _validate_security_config() -> None:
+    mode = settings.effective_auth_mode
+    if mode == "jwt" and len(settings.jwt_secret) < 16:
+        raise RuntimeError("jwt 模式 ARK_JWT_SECRET 过短(<16)，拒绝以弱密钥启动")
+    if mode == "none":
+        logger.warning("⚠ 鉴权未启用(auth_mode=none)——生产环境务必设 apikey 或 jwt")
+    if mode == "apikey":
+        logger.warning("⚠ apikey 模式信任 body 里的 player_id；高隔离场景建议用 jwt(从签名 token 取身份)")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global orchestrator, _ready
     from app.tracing import setup_tracing
+    _validate_security_config()
     setup_tracing(app)                 # 配了 ARK_OTEL_ENDPOINT 才生效，否则 no-op
     orchestrator = build_orchestrator(settings)
     _ready = True
@@ -169,8 +180,10 @@ def _ids(req: ChatRequest, request: Request) -> tuple[str, str]:
     # 优先用 JWT 验签后的 player_id（最可信）→ 其次 body 的 player_id → 最后来源 IP
     user_id = (getattr(request.state, "player_id", None)
                or req.player_id or (request.client.host if request.client else "anon"))
-    # 默认每个 玩家×干员 一条会话，历史/记忆自然隔离
-    session_id = req.session_id or f"{user_id}:{req.character}"
+    # 会话强制绑定在认证身份下：调用方给的 session_id 只是该玩家名下的子线程名，
+    # 一律加 user_id 前缀，无法用别人的 session_id 读到别人的历史/记忆。
+    thread = req.session_id or req.character
+    session_id = f"{user_id}:{thread}"
     return session_id, user_id
 
 
@@ -215,9 +228,25 @@ async def characters():
     }
 
 
+_HISTORY_MAX_TURNS = 20
+_HISTORY_MAX_CHARS = 2000
+
+
 def _history_arg(req: ChatRequest):
-    # 调用方传了历史就用它；否则 None → 服务端用 store 托管该会话历史
-    return [{"role": t.role, "content": t.content} for t in req.history] or None
+    """调用方历史是不可信输入：限角色/轮数/长度 + 过内容扫描，硬熔断轮丢弃。空则 None（服务端托管）。"""
+    if not req.history:
+        return None
+    from app.guard import rules
+    from app.guard.categories import Action
+    out = []
+    for t in req.history[-_HISTORY_MAX_TURNS:]:
+        if t.role not in ("user", "assistant"):        # 挡 system/developer/tool 角色注入
+            continue
+        content = (t.content or "")[:_HISTORY_MAX_CHARS]
+        if rules.to_input_verdict(rules.scan_content(content)).action == Action.HARD_CUTOFF:
+            continue                                     # 命中最高危类别的历史轮直接丢
+        out.append({"role": t.role, "content": content})
+    return out or None
 
 
 @app.post("/v1/chat", dependencies=[Depends(require_auth)])

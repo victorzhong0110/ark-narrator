@@ -14,8 +14,9 @@ class Turn:
 
 
 class Store(Protocol):
-    # ---- 对话历史（按 session）----
-    def append_turn(self, session_id: str, role: str, content: str) -> None: ...
+    # ---- 对话历史（按 session）。cap>0 写时裁剪到最近 cap 条；ttl>0 设会话过期秒数 ----
+    def append_turn(self, session_id: str, role: str, content: str,
+                    cap: int = 0, ttl: float = 0.0) -> None: ...
 
     def history(self, session_id: str, limit: int = 50) -> list[Turn]: ...
 

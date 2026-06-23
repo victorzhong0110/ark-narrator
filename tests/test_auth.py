@@ -45,11 +45,12 @@ def test_apikey_mode(monkeypatch):
 
 
 def test_jwt_mode_and_player_from_token(monkeypatch):
-    srv = _client(monkeypatch, ARK_AUTH_MODE="jwt", ARK_JWT_SECRET="s3cr3t")
+    secret = "s3cr3t-at-least-16-chars-long"
+    srv = _client(monkeypatch, ARK_AUTH_MODE="jwt", ARK_JWT_SECRET=secret)
     with TestClient(srv.app) as c:
         body = {"character": "能天使", "message": "hi"}      # body 不带 player_id
         assert c.post("/v1/chat", json=body).status_code == 401          # 无 token
-        tok = sign_jwt({"player_id": "alice", "exp": time.time() + 60}, "s3cr3t")
+        tok = sign_jwt({"player_id": "alice", "exp": time.time() + 60}, secret)
         r = c.post("/v1/chat", json=body, headers={"Authorization": f"Bearer {tok}"})
         assert r.status_code == 200
         assert r.json()["session_id"] == "alice:能天使"      # 用的是 token 里的 player_id

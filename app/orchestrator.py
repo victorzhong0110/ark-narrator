@@ -210,9 +210,10 @@ class DialogueOrchestrator:
             "risk": decision.risk_score,
         })
 
-        # 6) 持久化对话 + 滚动更新长期记忆（让她跨会话记得这位玩家）
-        self._store.append_turn(session_id, "user", message)
-        self._store.append_turn(session_id, "assistant", result.text)
+        # 6) 持久化对话（写时裁剪+TTL，防无界增长）+ 滚动更新长期记忆
+        cap, ttl = self._s.history_cap, self._s.session_ttl
+        self._store.append_turn(session_id, "user", message, cap, ttl)
+        self._store.append_turn(session_id, "assistant", result.text, cap, ttl)
         if self._memory is not None:
             recent = list(self._trim_history(history)) + [
                 {"role": "user", "content": message},

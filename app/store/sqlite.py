@@ -36,10 +36,16 @@ class SQLiteStore:
             self._db.executescript(_SCHEMA)
             self._db.commit()
 
-    def append_turn(self, session_id: str, role: str, content: str) -> None:
+    def append_turn(self, session_id: str, role: str, content: str,
+                    cap: int = 0, ttl: float = 0.0) -> None:
         with self._lock:
             self._db.execute("INSERT INTO history VALUES(?,?,?,?)",
                              (session_id, role, content, self._now()))
+            if cap > 0:     # 写时裁剪：只保留该会话最近 cap 条
+                self._db.execute(
+                    "DELETE FROM history WHERE session_id=? AND rowid NOT IN "
+                    "(SELECT rowid FROM history WHERE session_id=? ORDER BY rowid DESC LIMIT ?)",
+                    (session_id, session_id, cap))
             self._db.commit()
 
     def history(self, session_id: str, limit: int = 50) -> list[Turn]:

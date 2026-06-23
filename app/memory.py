@@ -55,5 +55,11 @@ class MemoryManager:
             [{"role": "user", "content": user}],
             max_tokens=max(64, self._max_chars // 2), temperature=0.3,
         ).strip()
-        if summary:
-            self._store.set_memory(user_id, character, summary[: self._max_chars])
+        if not summary:
+            return
+        # 防记忆投毒：摘要里若含注入特征（玩家诱导写进长期记忆），不存
+        from app.guard import rules
+        if not rules.detect_injection(summary).allowed:
+            logger.warning("长期记忆摘要含注入特征，丢弃不存（user=%s char=%s）", user_id, character)
+            return
+        self._store.set_memory(user_id, character, summary[: self._max_chars])

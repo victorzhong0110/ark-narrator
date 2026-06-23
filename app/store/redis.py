@@ -33,8 +33,14 @@ class RedisStore:
         else:
             self._r = redis.Redis.from_url(url)
 
-    def append_turn(self, session_id: str, role: str, content: str) -> None:
-        self._r.rpush(f"hist:{session_id}", json.dumps({"role": role, "content": content}))
+    def append_turn(self, session_id: str, role: str, content: str,
+                    cap: int = 0, ttl: float = 0.0) -> None:
+        key = f"hist:{session_id}"
+        self._r.rpush(key, json.dumps({"role": role, "content": content}))
+        if cap > 0:
+            self._r.ltrim(key, -cap, -1)        # 写时裁剪到最近 cap 条
+        if ttl > 0:
+            self._r.expire(key, int(ttl))       # 会话过期，防无界堆积
 
     def history(self, session_id: str, limit: int = 50) -> list[Turn]:
         start = -limit if limit > 0 else 0

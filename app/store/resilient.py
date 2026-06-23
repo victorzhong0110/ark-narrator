@@ -33,8 +33,9 @@ class ResilientStore:
         self._inner = inner
 
     @_safe("append_turn", None)
-    def append_turn(self, session_id: str, role: str, content: str) -> None:
-        self._inner.append_turn(session_id, role, content)
+    def append_turn(self, session_id: str, role: str, content: str,
+                    cap: int = 0, ttl: float = 0.0) -> None:
+        self._inner.append_turn(session_id, role, content, cap, ttl)
 
     @_safe("history", list)
     def history(self, session_id: str, limit: int = 50) -> list[Turn]:

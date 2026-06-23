@@ -49,7 +49,14 @@ def build_orchestrator(settings: Settings | None = None) -> DialogueOrchestrator
     store = ResilientStore(get_store(s))    # 存储抖动不 500，优雅降级
     backend = get_backend(s, store=store)   # pool 后端靠 store 做节点服务发现
 
-    cloud = get_cloud_auditor(s) or DisabledAuditor()
+    cloud_auditor = get_cloud_auditor(s)
+    if s.cloud_audit_enabled and cloud_auditor is None:
+        # 开启了云审但构建失败（缺凭证等）：fail-closed 下拒绝以不安全配置启动；否则降级告警
+        if s.cloud_audit_fail_closed:
+            raise RuntimeError(
+                "云端审核已开启且 fail_closed=True，但构建失败(缺凭证?) → 拒绝以不安全配置启动")
+        logger.warning("⚠ 云端审核已开启但不可用 → 降级为仅本地规则兜底")
+    cloud = cloud_auditor or DisabledAuditor()
     in_guard = InputGuard(s, t3_terms=t3_terms, store=store)
     out_guard = OutputGuard(
         s, system_markers=_system_markers(world), t3_terms=t3_terms, cloud_auditor=cloud

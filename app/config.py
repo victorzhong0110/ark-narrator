@@ -60,6 +60,8 @@ class Settings:
     api_key: str = field(default_factory=lambda: os.getenv("ARK_API_KEY", ""))
     # pool 后端（backend=pool）：自注册节点池的组名（Mac 节点心跳注册到这个组）
     node_group: str = field(default_factory=lambda: os.getenv("ARK_NODE_GROUP", "models"))
+    # 节点地址白名单（host 前缀，逗号分隔）；设了则只信白名单内的节点（防 SSRF）
+    node_allowlist: str = field(default_factory=lambda: os.getenv("ARK_NODE_ALLOWLIST", ""))
     # 关闭思考链（自托管 Qwen 节点：经 chat_template_kwargs 传给 mlx_lm.server/vLLM）。
     # 云端通用 OpenAI 端点可能不支持，故默认关；pool 后端默认开。
     disable_thinking: bool = field(
@@ -129,6 +131,9 @@ class Settings:
     memory_max_chars: int = field(
         default_factory=lambda: _env_int("ARK_MEMORY_MAX_CHARS", 600)
     )
+    # 历史保留上限（每会话保留的最近条数，写时裁剪）+ 会话存活 TTL 秒（防无界增长）
+    history_cap: int = field(default_factory=lambda: _env_int("ARK_HISTORY_CAP", 40))
+    session_ttl: float = field(default_factory=lambda: _env_float("ARK_SESSION_TTL", 604800.0))
 
     # ---- 路径 ----
     characters_dir: Path = field(

@@ -25,8 +25,12 @@ class InMemoryStore:
         self._nodes: dict[str, dict[str, float]] = {}   # group → {addr: expire_at}
 
     # ---- 历史 ----
-    def append_turn(self, session_id: str, role: str, content: str) -> None:
-        self._hist.setdefault(session_id, []).append(Turn(role, content, self._now()))
+    def append_turn(self, session_id: str, role: str, content: str,
+                    cap: int = 0, ttl: float = 0.0) -> None:
+        lst = self._hist.setdefault(session_id, [])
+        lst.append(Turn(role, content, self._now()))
+        if cap > 0 and len(lst) > cap:
+            self._hist[session_id] = lst[-cap:]    # 写时裁剪
 
     def history(self, session_id: str, limit: int = 50) -> list[Turn]:
         return self._hist.get(session_id, [])[-limit:] if limit > 0 else list(self._hist.get(session_id, []))

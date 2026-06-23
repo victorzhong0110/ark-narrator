@@ -30,8 +30,10 @@ def get_backend(settings: Settings, store=None) -> LLMBackend:
         from app.llm.pool_backend import PooledAPIBackend
         if store is None:
             raise ValueError("pool 后端需要 store（节点服务发现走存储）")
-        logger.info("使用 PooledAPIBackend：组=%s", settings.node_group)
+        allowlist = [p.strip() for p in settings.node_allowlist.split(",") if p.strip()]
+        logger.info("使用 PooledAPIBackend：组=%s 白名单=%s", settings.node_group, allowlist or "(无)")
         return PooledAPIBackend(store, settings.model_path,
                                 group=settings.node_group, api_key=settings.api_key or "EMPTY",
-                                disable_thinking=settings.disable_thinking or True)
+                                disable_thinking=settings.disable_thinking or True,
+                                allowlist=allowlist)
     raise ValueError(f"未知后端：{settings.backend}（应为 mlx / api / pool / scripted）")

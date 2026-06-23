@@ -13,9 +13,21 @@ T3 最高敏感词清单从外部文件注入（data/guard/politics_t3.txt），
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 from app.guard.categories import Action, RiskCategory, Verdict, input_action, severity
+
+# 零宽 / 双向控制 / 不可见分隔 / 控制符——用来在字符间插隙绕过正则，安全判定前必须清掉。
+# 用 \uXXXX 转义书写，源码里不含真·不可见字符（避免 Trojan-Source）。
+_INVISIBLE = re.compile(
+    "[\u200b-\u200f\u202a-\u202e\u2060-\u206f\x00-\x08\x0b-\x1f\ufeff\xad\u180e\x7f]"
+)
+
+
+def normalize(text: str) -> str:
+    """安全判定前的规范化：NFKC（折叠全角/兼容字符）+ 去不可见字符。仅用于检测，不用于展示。"""
+    return _INVISIBLE.sub("", unicodedata.normalize("NFKC", text or ""))
 
 # ---------------------------------------------------------------------------
 # 内容类别的正则族（粗筛）
@@ -156,6 +168,7 @@ def scan_content(text: str, t3_terms: tuple[str, ...] = ()) -> Verdict:
 
     用于入口（用户输入）与出口（模型草稿）共用的危险内容检测。
     """
+    text = normalize(text)
     candidates: list[Verdict] = []
     # 最严重优先收集
     for v in (
@@ -205,7 +218,7 @@ _ROLE_BREAK = [
 
 
 def detect_injection(text: str) -> Verdict:
-    v = _scan_family(text, _INJECTION, RiskCategory.PROMPT_INJECTION)
+    v = _scan_family(normalize(text), _INJECTION, RiskCategory.PROMPT_INJECTION)
     return v if v is not None else Verdict.ok()
 
 
@@ -218,6 +231,7 @@ _ROLE_DENIAL = re.compile(
 
 
 def detect_role_break(text: str) -> Verdict:
+    text = normalize(text)
     if _ROLE_DENIAL.search(text):
         return Verdict.ok()
     v = _scan_family(text, _ROLE_BREAK, RiskCategory.ROLE_BREAK)
@@ -226,6 +240,7 @@ def detect_role_break(text: str) -> Verdict:
 
 def detect_prompt_leak(text: str, markers: tuple[str, ...]) -> Verdict:
     """检测模型输出是否泄露了 system prompt（命中任一 marker 即判泄露）。"""
+    text = normalize(text)
     for marker in markers:
         marker = marker.strip()
         if len(marker) >= 4 and marker in text:

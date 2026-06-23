@@ -6,6 +6,7 @@ app 层从 Store（Redis）读取活节点列表（节点靠心跳自注册、TT
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 from typing import Callable, Iterator
@@ -20,9 +21,26 @@ _CB_THRESHOLD = 3      # 连续失败几次后熔断该节点
 _CB_COOLDOWN = 10.0    # 熔断冷却秒数（期内不再试，省连接超时）
 
 
+def _addr_ok(addr: str, allowlist: list[str]) -> bool:
+    """校验节点地址防 SSRF：始终拒绝云元数据/链路本地/组播/未指定段；配了白名单则只放行白名单前缀。"""
+    host = addr.rpartition(":")[0] if ":" in addr else addr
+    if not host:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            return False     # 169.254.169.254(云元数据)/0.0.0.0/组播 等一律拒
+    except ValueError:
+        pass                 # 主机名（非 IP），交给白名单判断
+    if allowlist:
+        return any(host.startswith(p) for p in allowlist)
+    return True
+
+
 class PooledAPIBackend:
     def __init__(self, store: Store, model: str, *, group: str = "models",
                  api_key: str = "EMPTY", disable_thinking: bool = True,
+                 allowlist: list[str] | None = None,
                  client_factory: Callable[[str], object] | None = None,
                  clock: Callable[[], float] = time.monotonic):
         self.label = f"pool:{model}"
@@ -30,6 +48,7 @@ class PooledAPIBackend:
         self._model = model
         self._group = group
         self._key = api_key or "EMPTY"
+        self._allowlist = allowlist or []
         self._disable_thinking = disable_thinking   # 自托管 Qwen 节点默认关思考
         self._client_factory = client_factory       # 测试可注入 addr→client
         self._backends: dict[str, APIBackend] = {}
@@ -57,7 +76,7 @@ class PooledAPIBackend:
 
     def _ordered(self) -> list[str]:
         """活节点列表：轮询起点错开；熔断中的节点排到最后（仅在健康节点都失败时才半开试探）。"""
-        nodes = self._store.live_nodes(self._group)
+        nodes = [n for n in self._store.live_nodes(self._group) if _addr_ok(n, self._allowlist)]
         if not nodes:
             return []
         i = self._store.incr(f"rr:{self._group}", 1) % len(nodes)
