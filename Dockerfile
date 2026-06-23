@@ -9,6 +9,7 @@ COPY requirements-server.txt .
 RUN pip install -r requirements-server.txt
 
 COPY app ./app
+COPY gateway ./gateway
 COPY data ./data
 
 ENV ARK_BACKEND=api ARK_STORE=redis

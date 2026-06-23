@@ -2,9 +2,13 @@
 #
 #   docker compose -f deploy/compose-prod.yml up -d --scale app=3        # 基础（Redis 持久化）
 #   docker compose -f deploy/compose-prod.yml --profile ha up -d --scale app=3   # + Redis Sentinel HA
+#   docker compose -f deploy/compose-prod.yml --profile gateway up -d    # + 推理网关（控制面/计算面分离）
 #
 # 默认 app 用 scripted 后端，便于无 GPU 本地验证整套 IaC/HA 链路；真模型把 ARK_BACKEND 改为
 # api/pool 并指向你的推理服务（Mac 机队或 vLLM）。机密放 deploy/.env（gitignore），不入 compose。
+#
+# 分离拓扑（gateway profile）：deploy/.env 设 ARK_BACKEND=api、ARK_API_BASE_URL=http://gateway:8080/v1、
+# ARK_API_KEY=<网关token>、GW_TOKENS=<同一token>，app 即经网关访问内部机队/外部 API。详见 docs/GATEWAY.md。
 name: ark-narrator-prod
 
 services:
@@ -53,10 +57,48 @@ services:
       ARK_CLOUD_AUDIT_PROVIDER: ${ARK_CLOUD_AUDIT_PROVIDER:-mock}
       ARK_API_AUTH_KEY: ${ARK_API_AUTH_KEY:-}
       ARK_MAX_CONCURRENCY: ${ARK_MAX_CONCURRENCY:-8}
+      # 分离拓扑：ARK_BACKEND=api 时指向 gateway；内部消费者用独立 token 分账
+      ARK_API_BASE_URL: ${ARK_API_BASE_URL:-}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      ARK_INTERNAL_API_KEY: ${ARK_INTERNAL_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
     expose: ["8000"]
+    restart: unless-stopped
+
+  gateway:                                 # 推理网关（计算面，profile gateway）：token 鉴权 + 路由(内部机队/外部API)
+    build: ..
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GW_BACKEND: ${GW_BACKEND:-scripted}   # scripted 验链路；真机队改 pool（靠 Redis 服务发现）
+      GW_REDIS_URL: redis://redis:6379/0
+      GW_NODE_GROUP: ${ARK_NODE_GROUP:-models}
+      GW_NODE_ALLOWLIST: ${GW_NODE_ALLOWLIST:-}
+      GW_PORT: "8080"
+      GW_TOKENS: ${GW_TOKENS:-}             # 逗号分隔；或挂载 gateway/tokens.yaml 做细策略
+      GW_EXTERNAL_BASE_URL: ${GW_EXTERNAL_BASE_URL:-}   # 外部 API 兜底/分流（留空=纯内部）
+      GW_EXTERNAL_KEY: ${GW_EXTERNAL_KEY:-}
+      GW_EXTERNAL_MODEL: ${GW_EXTERNAL_MODEL:-}
+      GW_ROUTE_DEFAULT: ${GW_ROUTE_DEFAULT:-pool}
+      GW_ROUTE_FALLBACK: ${GW_ROUTE_FALLBACK:-external}
+      GW_EXTERNAL_SPLIT: ${GW_EXTERNAL_SPLIT:-0}
+      GW_ROUTE_TABLE: ${GW_ROUTE_TABLE:-}
+    command: ["python", "-m", "gateway.app"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose: ["8080"]
+    ports: ["8080:8080"]
+    profiles: ["gateway"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   lb:                                      # nginx：对 app 副本做负载均衡
