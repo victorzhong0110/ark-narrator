@@ -64,3 +64,41 @@ def test_streaming_openai_chunks(client):
     assert "data:" in body
     assert "chat.completion.chunk" in body
     assert "[DONE]" in body
+
+
+def test_routing_served_target_and_external(monkeypatch):
+    monkeypatch.setenv("GW_BACKEND", "scripted")
+    monkeypatch.setenv("GW_EXTERNAL_BASE_URL", "mock")          # 外部脚本上游
+    monkeypatch.setenv("GW_ROUTE_TABLE", "ext-model=external")  # 把 ext-model 路由到外部
+    monkeypatch.setenv("GW_TOKENS_FILE", "gateway/__nonexistent__.yaml")
+    monkeypatch.delenv("GW_TOKENS", raising=False)
+    import gateway.app as gw
+    importlib.reload(gw)
+    with TestClient(gw.app) as c:
+        r1 = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]})
+        assert r1.headers["x-served-target"] == "pool"          # 默认走内部
+        r2 = c.post("/v1/chat/completions",
+                    json={"model": "ext-model", "messages": [{"role": "user", "content": "hi"}]})
+        assert r2.headers["x-served-target"] == "external"      # 路由表命中外部
+        assert "外部mock" in r2.json()["choices"][0]["message"]["content"]
+
+
+def test_failover_to_next_target(monkeypatch):
+    monkeypatch.setenv("GW_BACKEND", "scripted")
+    monkeypatch.setenv("GW_TOKENS_FILE", "gateway/__nonexistent__.yaml")
+    import gateway.app as gw
+    importlib.reload(gw)
+    from gateway.router import Router
+
+    class _Boom:
+        def generate(self, *a, **k):
+            raise RuntimeError("pool down")
+
+    class _Ok:
+        def generate(self, *a, **k):
+            return "ok-text"
+
+    gw._router = Router(targets={"pool": _Boom(), "external": _Ok()},
+                        default="pool", fallback="external")
+    tname, text = gw._serve_generate("sys", [{"role": "user", "content": "x"}], "m", 50, 0.7)
+    assert (tname, text) == ("external", "ok-text")             # 内部失败 → 外部兜底

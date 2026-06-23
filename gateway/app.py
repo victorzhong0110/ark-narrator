@@ -14,10 +14,10 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.metrics import Metrics
-from gateway.config import build_backend, load_gateway_settings
+from gateway.config import build_router, load_gateway_settings
 from gateway.tokens import load_tokens
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -25,18 +25,19 @@ logger = logging.getLogger(__name__)
 
 settings = load_gateway_settings()
 METRICS = Metrics()
-_backend = None
+_router = None
 _tokens: dict[str, dict] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backend, _tokens
+    global _router, _tokens
     _tokens = load_tokens(settings.tokens_file)
     if not _tokens:
         logger.warning("⚠ 网关未配置 token（开放模式，仅 dev）——生产务必配 GW_TOKENS/tokens.yaml")
-    _backend = build_backend(settings)
-    logger.info("推理网关就绪：backend=%s model=%s tokens=%d", settings.backend, settings.model, len(_tokens))
+    _router = build_router(settings)
+    logger.info("推理网关就绪：targets=%s default=%s fallback=%s split=%.2f tokens=%d",
+                list(_router.targets), _router.default, _router.fallback, _router.split, len(_tokens))
     yield
 
 
@@ -65,8 +66,37 @@ def _split(messages: list[dict]) -> tuple[str, list[dict]]:
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok" if _backend is not None else "starting",
-            "backend": settings.backend, "model": settings.model}
+    return {"status": "ok" if _router is not None else "starting",
+            "backend": settings.backend, "model": settings.model,
+            "targets": list(_router.targets) if _router else []}
+
+
+def _serve_generate(system: str, msgs: list[dict], model: str,
+                    max_tokens: int, temperature: float) -> tuple[str, str]:
+    """按路由顺序尝试目标，首个成功即返回 (目标名, 文本)；全失败则抛错（跨上游故障转移）。"""
+    last: Exception | None = None
+    for tname, backend in _router.route(model):
+        try:
+            text = backend.generate(system, msgs, max_tokens=max_tokens, temperature=temperature)
+            return tname, text
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            METRICS.inc("gw_target_fail_total", {"target": tname})
+            logger.warning("目标 %s 失败，转下一个：%s", tname, exc)
+    raise RuntimeError(f"所有上游均失败：{last}")
+
+
+def _serve_stream(system: str, msgs: list[dict], model: str,
+                  max_tokens: int, temperature: float) -> tuple[str, list[str]]:
+    last: Exception | None = None
+    for tname, backend in _router.route(model):
+        try:
+            pieces = list(backend.stream(system, msgs, max_tokens=max_tokens, temperature=temperature))
+            return tname, pieces
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            METRICS.inc("gw_target_fail_total", {"target": tname})
+    raise RuntimeError(f"所有上游均失败：{last}")
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
@@ -97,13 +127,13 @@ async def chat_completions(request: Request):
         async def gen():
             cid = "chatcmpl-" + uuid.uuid4().hex[:12]
             try:
-                it = await asyncio.to_thread(
-                    lambda: list(_backend.stream(system, msgs, max_tokens=max_tokens, temperature=temperature)))
+                tname, pieces = await asyncio.to_thread(
+                    _serve_stream, system, msgs, model, max_tokens, temperature)
             except Exception as exc:  # noqa: BLE001
                 METRICS.inc("gw_requests_total", {"token": name, "status": "error"})
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"
                 return
-            for piece in it:
+            for piece in pieces:
                 chunk = {"id": cid, "object": "chat.completion.chunk", "created": int(time.time()),
                          "model": model, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -111,25 +141,27 @@ async def chat_completions(request: Request):
                     "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
             yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
-            METRICS.inc("gw_requests_total", {"token": name, "status": "200"})
+            METRICS.inc("gw_requests_total", {"token": name, "status": "200", "target": tname})
             METRICS.observe("gw_request_seconds", time.perf_counter() - start, {"token": name})
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     try:
-        text = await asyncio.to_thread(
-            _backend.generate, system, msgs, max_tokens=max_tokens, temperature=temperature)
+        tname, text = await asyncio.to_thread(
+            _serve_generate, system, msgs, model, max_tokens, temperature)
     except Exception as exc:  # noqa: BLE001
         METRICS.inc("gw_requests_total", {"token": name, "status": "error"})
         raise HTTPException(502, f"上游推理失败：{exc}") from exc
-    METRICS.inc("gw_requests_total", {"token": name, "status": "200"})
+    METRICS.inc("gw_requests_total", {"token": name, "status": "200", "target": tname})
     METRICS.observe("gw_request_seconds", time.perf_counter() - start, {"token": name})
-    return {
-        "id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion",
-        "created": int(time.time()), "model": model,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
-                     "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 0, "completion_tokens": len(text), "total_tokens": len(text)},
-    }
+    return JSONResponse(
+        headers={"X-Served-Target": tname},     # 本次实际命中的上游（pool/external），便于观测
+        content={
+            "id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion",
+            "created": int(time.time()), "model": model,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": len(text), "total_tokens": len(text)},
+        })
 
 
 if __name__ == "__main__":

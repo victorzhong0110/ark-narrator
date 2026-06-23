@@ -26,6 +26,16 @@ class GatewaySettings:
     tokens_file: Path = field(
         default_factory=lambda: ROOT / os.getenv("GW_TOKENS_FILE", "gateway/tokens.yaml")
     )
+    # ---- 路由（G2）：外部 API + 路由表/策略 ----
+    # external_base_url：留空=无外部；"mock"=测试用脚本上游；否则 OpenAI 兼容端点(MiniMax/DeepSeek…)
+    external_base_url: str = field(default_factory=lambda: os.getenv("GW_EXTERNAL_BASE_URL", ""))
+    external_key: str = field(default_factory=lambda: os.getenv("GW_EXTERNAL_KEY", "EMPTY"))
+    external_model: str = field(default_factory=lambda: os.getenv("GW_EXTERNAL_MODEL", ""))
+    route_default: str = field(default_factory=lambda: os.getenv("GW_ROUTE_DEFAULT", "pool"))
+    route_fallback: str = field(default_factory=lambda: os.getenv("GW_ROUTE_FALLBACK", "external"))
+    external_split: float = field(default_factory=lambda: float(os.getenv("GW_EXTERNAL_SPLIT", "0")))
+    # 路由表："model=target,model2=target2"，如 "deepseek-chat=external,ark-local=pool"
+    route_table: str = field(default_factory=lambda: os.getenv("GW_ROUTE_TABLE", ""))
 
 
 def load_gateway_settings() -> GatewaySettings:
@@ -49,3 +59,39 @@ def build_backend(s: GatewaySettings):
         return PooledAPIBackend(RedisStore(s.redis_url), s.model, group=s.node_group,
                                 disable_thinking=s.disable_thinking, allowlist=allow)
     raise ValueError(f"未知 GW_BACKEND：{s.backend}")
+
+
+def _build_external(s: GatewaySettings):
+    """外部 API 目标：""=无；"mock"=脚本上游(测试)；否则 OpenAI 兼容端点。"""
+    if not s.external_base_url:
+        return None
+    if s.external_base_url == "mock":
+        from app.llm.scripted_backend import ScriptedBackend
+        return ScriptedBackend(
+            lambda system, msgs: f"（外部mock）{msgs[-1]['content'] if msgs else ''}")
+    from app.llm.api_backend import APIBackend
+    return APIBackend(s.external_model or s.model, s.external_base_url, s.external_key,
+                      disable_thinking=False)   # 外部托管模型自带思考策略，不强关
+
+
+def _parse_table(spec: str) -> dict[str, str]:
+    table: dict[str, str] = {}
+    for pair in spec.split(","):
+        if "=" in pair:
+            model, target = pair.split("=", 1)
+            if model.strip() and target.strip():
+                table[model.strip()] = target.strip()
+    return table
+
+
+def build_router(s: GatewaySettings):
+    """组装路由器：pool（内部）+ external（外部，可选）两个目标 + 路由表/策略。"""
+    from gateway.router import Router
+    targets: dict[str, object] = {"pool": build_backend(s)}
+    external = _build_external(s)
+    if external is not None:
+        targets["external"] = external
+    fallback = s.route_fallback if s.route_fallback in targets else None
+    return Router(targets=targets, table=_parse_table(s.route_table),
+                  default=s.route_default if s.route_default in targets else "pool",
+                  fallback=fallback, split=max(0.0, min(1.0, s.external_split)))
