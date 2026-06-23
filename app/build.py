@@ -10,7 +10,7 @@ from app.guard import rules
 from app.guard.cloud_audit import DisabledAuditor, get_cloud_auditor
 from app.guard.input_guard import InputGuard
 from app.guard.output_guard import OutputGuard
-from app.llm.factory import get_backend
+from app.llm.factory import get_backend, get_internal_backend
 from app.logging_store import AuditLog
 from app.memory import MemoryManager
 from app.orchestrator import DialogueOrchestrator
@@ -62,14 +62,16 @@ def build_orchestrator(settings: Settings | None = None) -> DialogueOrchestrator
         s, system_markers=_system_markers(world), t3_terms=t3_terms, cloud_auditor=cloud
     )
     audit = AuditLog(s.audit_log_path)
-    scene_tagger = get_scene_tagger(s, backend)
+    # 内部消费者(场景判定/记忆摘要)走独立网关 token（非面向用户，可限内部机队、单独计量/配额）
+    internal_backend = get_internal_backend(s, backend)
+    scene_tagger = get_scene_tagger(s, internal_backend)
     memory = MemoryManager(
-        backend, store, every=s.memory_every, max_chars=s.memory_max_chars
+        internal_backend, store, every=s.memory_every, max_chars=s.memory_max_chars
     )
 
     logger.info(
-        "编排就绪：IP=%s 后端=%s 存储=%s 角色=%d lore=%d 云端审核=%s 场景判定=%s 记忆/%d轮",
-        world.work, backend.label, s.store, len(characters), len(chunks),
+        "编排就绪：IP=%s 主后端=%s 内部后端=%s 存储=%s 角色=%d lore=%d 云端审核=%s 场景判定=%s 记忆/%d轮",
+        world.work, backend.label, internal_backend.label, s.store, len(characters), len(chunks),
         getattr(cloud, "name", "?"), s.scene_tagger, s.memory_every,
     )
     return DialogueOrchestrator(

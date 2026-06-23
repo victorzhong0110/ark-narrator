@@ -37,3 +37,14 @@ def get_backend(settings: Settings, store=None) -> LLMBackend:
                                 disable_thinking=settings.disable_thinking or True,
                                 allowlist=allowlist)
     raise ValueError(f"未知后端：{settings.backend}（应为 mlx / api / pool / scripted）")
+
+
+def get_internal_backend(settings: Settings, main_backend: LLMBackend) -> LLMBackend:
+    """内部消费者(场景判定/记忆摘要)的后端：api 模式且配了 internal_api_key 时，
+    用单独 token 指向同一网关(各自计量/配额，可限内部机队)；否则复用主后端。"""
+    if settings.backend.lower() == "api" and settings.internal_api_key:
+        from app.llm.api_backend import APIBackend
+        logger.info("内部消费者用独立网关 token（与主调用分账）：%s", settings.api_base_url)
+        return APIBackend(settings.model_path, settings.api_base_url, settings.internal_api_key,
+                          disable_thinking=settings.disable_thinking)
+    return main_backend

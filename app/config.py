@@ -58,6 +58,9 @@ class Settings:
     # api 后端（backend=api 时用；OpenAI 兼容：MiniMax/DeepSeek/通义等）
     api_base_url: str = field(default_factory=lambda: os.getenv("ARK_API_BASE_URL", ""))
     api_key: str = field(default_factory=lambda: os.getenv("ARK_API_KEY", ""))
+    # 内部消费者(场景判定/记忆摘要)专用网关 token；设了则这些非面向用户的调用用它(各自计量/配额，
+    # 通常限内部机队、不占外部 API 成本)。留空=复用主 api_key（不区分）。仅 backend=api 时生效。
+    internal_api_key: str = field(default_factory=lambda: os.getenv("ARK_INTERNAL_API_KEY", ""))
     # pool 后端（backend=pool）：自注册节点池的组名（Mac 节点心跳注册到这个组）
     node_group: str = field(default_factory=lambda: os.getenv("ARK_NODE_GROUP", "models"))
     # 节点地址白名单（host 前缀，逗号分隔）；设了则只信白名单内的节点（防 SSRF）
