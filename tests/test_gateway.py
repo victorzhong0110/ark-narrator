@@ -100,5 +100,53 @@ def test_failover_to_next_target(monkeypatch):
 
     gw._router = Router(targets={"pool": _Boom(), "external": _Ok()},
                         default="pool", fallback="external")
-    tname, text = gw._serve_generate("sys", [{"role": "user", "content": "x"}], "m", 50, 0.7)
+    tname, text = gw._serve_generate("sys", [{"role": "user", "content": "x"}], "m", 50, 0.7, [])
     assert (tname, text) == ("external", "ok-text")             # 内部失败 → 外部兜底
+
+
+# ---- G3：每 token 配额 / 可用目标 ----
+
+def _client_with_tokens(monkeypatch, tmp_path, yaml_text, **env):
+    f = tmp_path / "tok.yaml"
+    f.write_text(yaml_text, encoding="utf-8")
+    monkeypatch.setenv("GW_BACKEND", "scripted")
+    monkeypatch.setenv("GW_TOKENS_FILE", str(f))
+    monkeypatch.delenv("GW_TOKENS", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    import gateway.app as gw
+    importlib.reload(gw)
+    return gw
+
+
+def test_rate_limit_returns_429(monkeypatch, tmp_path):
+    gw = _client_with_tokens(monkeypatch, tmp_path,
+                             "tokens:\n  - token: lim\n    name: limited\n    rate_limit: 2\n")
+    with TestClient(gw.app) as c:
+        h = {"Authorization": "Bearer lim"}
+        body = {"messages": [{"role": "user", "content": "hi"}]}
+        assert c.post("/v1/chat/completions", json=body, headers=h).status_code == 200
+        assert c.post("/v1/chat/completions", json=body, headers=h).status_code == 200
+        assert c.post("/v1/chat/completions", json=body, headers=h).status_code == 429
+
+
+def test_allow_targets_forbidden_when_no_match(monkeypatch, tmp_path):
+    # token 只许 external，但没配 external 目标 → 403
+    gw = _client_with_tokens(monkeypatch, tmp_path,
+                             "tokens:\n  - token: ext\n    name: extonly\n    allow_targets: [external]\n")
+    with TestClient(gw.app) as c:
+        r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]},
+                   headers={"Authorization": "Bearer ext"})
+        assert r.status_code == 403
+
+
+def test_allow_targets_restricts_to_pool(monkeypatch, tmp_path):
+    # 有 external，但 token 只许 pool → 命中 pool
+    gw = _client_with_tokens(monkeypatch, tmp_path,
+                             "tokens:\n  - token: p\n    name: poolonly\n    allow_targets: [pool]\n",
+                             GW_EXTERNAL_BASE_URL="mock")
+    with TestClient(gw.app) as c:
+        r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]},
+                   headers={"Authorization": "Bearer p"})
+        assert r.status_code == 200
+        assert r.headers["x-served-target"] == "pool"

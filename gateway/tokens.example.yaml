@@ -1,7 +1,13 @@
 # 网关 token（复制为 gateway/tokens.yaml，已 gitignore）。每个内部消费者一个 token。
 # 安全：token 只发给「内部/非面向用户」消费者；面向用户的内容必须经控制面(带护栏)再调网关。
+# 每 token 策略（缺省即不限）：rate_limit 每分钟请求数、daily_quota 每日请求数、allow_targets 允许的上游。
 tokens:
-  - token: replace-with-strong-random-1     # 控制面 ArkNarrator
+  - token: replace-with-strong-random-1     # 控制面 ArkNarrator（面向用户，给足额度）
     name: arknarrator
-  - token: replace-with-strong-random-2     # 内部：场景判定/记忆摘要/eval（共用空闲算力）
+    rate_limit: 600
+    daily_quota: 1000000
+    allow_targets: [pool, external]         # 允许内部机队 + 外部 API 兜底
+  - token: replace-with-strong-random-2     # 内部：场景判定/记忆摘要/eval（共用空闲算力，限内部、低额度）
     name: internal
+    rate_limit: 120
+    allow_targets: [pool]                    # 只走内部，不占外部 API 成本
