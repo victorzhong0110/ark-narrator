@@ -32,6 +32,9 @@ data/state.sqlite*
 # 部署机密（compose-prod 的覆盖项）
 deploy/.env
 
+# 网关真实 token（勿入库）
+gateway/tokens.yaml
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints

@@ -1,0 +1,7 @@
+# 网关 token（复制为 gateway/tokens.yaml，已 gitignore）。每个内部消费者一个 token。
+# 安全：token 只发给「内部/非面向用户」消费者；面向用户的内容必须经控制面(带护栏)再调网关。
+tokens:
+  - token: replace-with-strong-random-1     # 控制面 ArkNarrator
+    name: arknarrator
+  - token: replace-with-strong-random-2     # 内部：场景判定/记忆摘要/eval（共用空闲算力）
+    name: internal
