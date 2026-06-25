@@ -108,3 +108,35 @@ def test_jwt_weak_secret_refused(monkeypatch):
     with pytest.raises(RuntimeError):  # noqa: PT012
         with TestClient(srv.app):
             pass
+
+
+# ---- 第二轮 deep scan 修复 ----
+
+# F2 拒绝仓库占位符密钥（k8s REPLACE_ME 直接上线）
+def test_refuse_placeholder_secret(monkeypatch):
+    srv = _srv(monkeypatch, ARK_API_AUTH_KEY="REPLACE_ME")
+    with pytest.raises(RuntimeError):  # noqa: PT012
+        with TestClient(srv.app):
+            pass
+
+
+# F2 真模型后端(api/pool/mlx)无鉴权 → 拒绝启动（不 fail-open）
+def test_refuse_real_backend_without_auth(monkeypatch):
+    srv = _srv(monkeypatch, ARK_BACKEND="api", ARK_API_BASE_URL="http://x/v1", ARK_API_KEY="k")
+    with pytest.raises(RuntimeError):  # noqa: PT012
+        with TestClient(srv.app):
+            pass
+
+
+# F10 限流：Redis 失败时降级到进程内本地限流，而非直接放行
+def test_rate_allow_fails_to_local_limit_not_open():
+    from app.store.resilient import ResilientStore
+
+    class _Boom:
+        def rate_allow(self, *a, **k):
+            raise RuntimeError("redis down")
+
+    rs = ResilientStore(_Boom())
+    assert rs.rate_allow("u", 2, 60) is True
+    assert rs.rate_allow("u", 2, 60) is True
+    assert rs.rate_allow("u", 2, 60) is False      # 第3次被本地限流拦下，未 fail-open

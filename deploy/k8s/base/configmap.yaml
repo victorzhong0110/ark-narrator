@@ -8,5 +8,7 @@ data:
   ARK_SCENE_TAGGER: "llm"
   ARK_CLOUD_AUDIT: "true"
   ARK_CLOUD_AUDIT_PROVIDER: "http"
+  ARK_CLOUD_AUDIT_FAIL_CLOSED: "true"   # 生产：云审不可用则拦截，绝不静默降级为仅本地
+  ARK_AUTH_MODE: "jwt"                  # 生产强制鉴权(配 ARK_JWT_SECRET via Secret)，不退回 none
   ARK_MAX_CONCURRENCY: "8"
   ARK_BACKEND: "api"

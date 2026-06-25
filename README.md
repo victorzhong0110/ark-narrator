@@ -115,16 +115,18 @@ pip install -r requirements.txt
 
 ### 推理
 
+> 生产/对话产品请用受护栏保护的控制面 **`app.server:app`**（鉴权 + 输入输出护栏 + 审计 +
+> 身份隔离），见 [docs/DIALOGUE_PRODUCT.md](docs/DIALOGUE_PRODUCT.md) 与 [docs/GATEWAY.md](docs/GATEWAY.md)。
+> 下面的 `inference.server` 是**微调期遗留的裸推理 demo（无鉴权/护栏）**，仅供本地调试，默认只绑
+> 127.0.0.1，**切勿暴露公网**。
+
 ```bash
 # 命令行测试（默认 Qwen2.5 适配器）
 python inference/test_roleplay.py --model qwen
 
-# 启动 Web Demo
-uvicorn inference.server:app --host 0.0.0.0 --port 8000
+# 遗留 demo（仅本地，默认绑 127.0.0.1）
+uvicorn inference.server:app --port 8000
 # 访问 http://localhost:8000
-
-# 切换到 Qwen3 适配器
-MODEL_KEY=qwen3 uvicorn inference.server:app --port 8000
 ```
 
 ### 训练

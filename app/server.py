@@ -44,12 +44,21 @@ _INSTANCE = os.getenv("HOSTNAME") or socket.gethostname()   # 容器内每实例
 
 def _validate_security_config() -> None:
     mode = settings.effective_auth_mode
+    # 拒绝仓库占位符密钥（如 k8s base 的 REPLACE_ME 直接 apply 上线）
+    if "REPLACE_ME" in (settings.api_auth_key, settings.jwt_secret, settings.api_key):
+        raise RuntimeError("检测到占位符密钥 REPLACE_ME——拒绝启动，请在部署时替换为真实密钥")
     if mode == "jwt" and len(settings.jwt_secret) < 16:
         raise RuntimeError("jwt 模式 ARK_JWT_SECRET 过短(<16)，拒绝以弱密钥启动")
     if mode == "none":
-        logger.warning("⚠ 鉴权未启用(auth_mode=none)——生产环境务必设 apikey 或 jwt")
+        # 真模型后端(api/pool/mlx)上线却无鉴权 = fail-open，拒绝；scripted(本地验链路)仅告警
+        if settings.backend.lower() in {"api", "pool", "mlx"}:
+            raise RuntimeError(
+                f"backend={settings.backend} 服务真实模型却 auth_mode=none → 拒绝启动。"
+                "设 ARK_API_AUTH_KEY 或 ARK_AUTH_MODE=jwt；纯本地链路验证可用 backend=scripted")
+        logger.warning("⚠ 鉴权未启用(auth_mode=none)——仅适用本地 scripted 验证，生产务必设 apikey/jwt")
     if mode == "apikey":
-        logger.warning("⚠ apikey 模式信任 body 里的 player_id；高隔离场景建议用 jwt(从签名 token 取身份)")
+        logger.warning("⚠ apikey=服务级共享密钥，信任 body 的 player_id（适合受信游戏后端代调，"
+                       "玩家身份由游戏侧已鉴权）；面向不可信客户端/需逐玩家隔离请用 jwt")
 
 
 @asynccontextmanager
@@ -161,19 +170,22 @@ async def _bounded_respond(session_id: str, user_id: str, character: str,
 
 
 class Turn(BaseModel):
-    role: str
-    content: str
+    role: str = Field(..., max_length=16)
+    content: str = Field(..., max_length=8000)
 
 
 class ChatRequest(BaseModel):
+    # 字段级硬约束：防超大/超多结构在 Pydantic 解析层就被拒（不依赖 Content-Length）
     player_id: str | None = Field(
-        None, description="游戏侧玩家ID（强烈建议传）。长期记忆/会话按它隔离；不传则退回按来源IP")
-    character: str = Field(..., description="干员名，例如 '阿米娅'")
-    message: str = Field(..., description="玩家本轮发言")
+        None, max_length=128,
+        description="游戏侧玩家ID（强烈建议传）。长期记忆/会话按它隔离；不传则退回按来源IP")
+    character: str = Field(..., max_length=64, description="干员名，例如 '阿米娅'")
+    message: str = Field(..., max_length=8000, description="玩家本轮发言")
     session_id: str | None = Field(
-        None, description="会话线程ID。不传则默认每个(玩家×干员)一条会话")
+        None, max_length=128, description="会话线程ID。不传则默认每个(玩家×干员)一条会话")
     history: list[Turn] = Field(
-        default_factory=list, description="可选。不传则服务端用 store 托管历史（薄客户端推荐）")
+        default_factory=list, max_length=50,
+        description="可选。不传则服务端用 store 托管历史（薄客户端推荐）")
 
 
 def _ids(req: ChatRequest, request: Request) -> tuple[str, str]:

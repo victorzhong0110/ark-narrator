@@ -36,7 +36,12 @@ async def lifespan(app: FastAPI):
     global _router, _quota, _tokens
     _tokens = load_tokens(settings.tokens_file)
     if not _tokens:
-        logger.warning("⚠ 网关未配置 token（开放模式，仅 dev）——生产务必配 GW_TOKENS/tokens.yaml")
+        # fail-closed：没配 token 默认拒绝启动；要开匿名开放模式必须显式 GW_ALLOW_ANON=true（仅 dev）
+        if not settings.allow_anon:
+            raise RuntimeError(
+                "网关未配置任何 token → 拒绝启动（裸模型不可匿名暴露）。"
+                "配 GW_TOKENS/tokens.yaml；仅本地调试可设 GW_ALLOW_ANON=true 开匿名模式")
+        logger.warning("⚠ GW_ALLOW_ANON=true：网关匿名开放模式（仅 dev，绝不可用于生产）")
     _router = build_router(settings)
     _quota = QuotaManager(settings.redis_url if settings.backend == "pool" else None)
     logger.info("推理网关就绪：targets=%s default=%s fallback=%s split=%.2f tokens=%d",
@@ -135,13 +140,24 @@ async def chat_completions(request: Request):
         METRICS.inc("gw_quota_reject_total", {"token": name, "reason": reason})
         raise HTTPException(429, f"超出{'限流' if reason == 'rate' else '日配额'}（token={name}）")
     allow = info.get("allow_targets") or []
-    body = await request.json()
+    # 资源上限（防 DoS/成本放大）：先按 Content-Length 卡体积，再卡消息条数/prompt 字符/输出 token
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > settings.max_body_bytes:
+        raise HTTPException(413, "请求体过大")
+    raw = await request.body()
+    if len(raw) > settings.max_body_bytes:      # Content-Length 缺失/不实时也兜住
+        raise HTTPException(413, "请求体过大")
+    body = json.loads(raw or b"{}")
     messages = body.get("messages") or []
     if not messages:
         raise HTTPException(400, "messages 不能为空")
+    if len(messages) > settings.max_messages:
+        raise HTTPException(413, "消息条数过多")
+    if sum(len(str(m.get("content", ""))) for m in messages) > settings.max_prompt_chars:
+        raise HTTPException(413, "prompt 过长")
     system, msgs = _split(messages)
     model = body.get("model", settings.model)
-    max_tokens = int(body.get("max_tokens", 320))
+    max_tokens = min(int(body.get("max_tokens", 320)), settings.max_output_tokens)   # 封顶输出
     temperature = float(body.get("temperature", 0.7))
     start = time.perf_counter()
 

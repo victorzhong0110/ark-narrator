@@ -99,3 +99,12 @@ docker compose -f deploy/compose-prod.yml --profile gateway up -d --scale app=3
 ```
 
 `GW_BACKEND=scripted` 可无 GPU 验证整条链路；真机队改 `pool`（节点经 Redis 自注册，见 deploy/join_cluster.sh）。
+
+## 生产硬性要求（fail-closed）
+
+- **必须配 token**：没配任何 token 时网关**拒绝启动**；仅本地调试可设 `GW_ALLOW_ANON=true` 开匿名模式（绝不可用于生产）。
+- **不对外暴露**：compose 里网关只 `expose`（内网），不发布主机端口。裸模型网关绝不直接对公网；如确需，必须前置鉴权代理。
+- **env token 是无策略的**：`GW_TOKENS=a,b` 建的 token 无限流/无配额/全目标——仅适合 dev。生产用 `gateway/tokens.yaml` 给每个 token 配 `rate_limit`/`daily_quota`/`allow_targets`。
+- **资源上限**：`GW_MAX_BODY_BYTES`(默认 64KB)、`GW_MAX_OUTPUT_TOKENS`(1024，封顶 `max_tokens`)、`GW_MAX_MESSAGES`、`GW_MAX_PROMPT_CHARS`，防 DoS/成本放大。
+- **pool 节点白名单**：`GW_NODE_ALLOWLIST` 限定可信节点前缀，并给 Redis 加鉴权，防恶意节点注册劫持 prompt 流量。
+- **显式路由不外泄**：路由表显式指定的 target 不会偷偷兜底到外部 API；跨边界兜底只走默认/auto 策略且受 `allow_targets` 限。

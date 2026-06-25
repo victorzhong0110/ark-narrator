@@ -7,6 +7,8 @@ Redis 抖动/瞬断时，记忆/历史/限流这些非关键操作不应让整�
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 from app.metrics import METRICS
 from app.store.base import Store, Turn
@@ -31,6 +33,8 @@ def _safe(op: str, default):
 class ResilientStore:
     def __init__(self, inner: Store):
         self._inner = inner
+        self._lock = threading.Lock()
+        self._local_rl: dict[tuple[str, int], int] = {}   # 限流降级用的进程内计数
 
     @_safe("append_turn", None)
     def append_turn(self, session_id: str, role: str, content: str,
@@ -65,9 +69,27 @@ class ResilientStore:
     def delete(self, key: str) -> None:
         self._inner.delete(key)
 
-    @_safe("rate_allow", True)        # 限流失败 → 放行（可用性优先，best-effort）
     def rate_allow(self, user_id: str, limit: int, window_s: float) -> bool:
-        return self._inner.rate_allow(user_id, limit, window_s)
+        # 限流是安全控制：Redis 抖断时不能直接放行（fail-open），降级为进程内本地限流
+        # （跨副本不精确，但每实例仍兜底，防 Redis 故障期被滥用刷穿）。
+        try:
+            return self._inner.rate_allow(user_id, limit, window_s)
+        except Exception as exc:  # noqa: BLE001
+            METRICS.inc("ark_store_errors_total", {"op": "rate_allow"})
+            logger.warning("store.rate_allow 失败，降级进程内本地限流：%s", exc)
+            return self._local_rate_allow(user_id, limit, window_s)
+
+    def _local_rate_allow(self, user_id: str, limit: int, window_s: float) -> bool:
+        if limit <= 0:
+            return True
+        bucket = int(time.time() // max(1.0, window_s))
+        key = (user_id, bucket)
+        with self._lock:
+            n = self._local_rl.get(key, 0) + 1
+            self._local_rl[key] = n
+            if len(self._local_rl) > 10000:    # 清理过期桶，防无界增长
+                self._local_rl = {k: v for k, v in self._local_rl.items() if k[1] >= bucket}
+            return n <= limit
 
     @_safe("register_node", None)
     def register_node(self, group: str, addr: str, ttl: float) -> None:

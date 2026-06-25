@@ -14,10 +14,23 @@ def _client(monkeypatch, *, tokens: str | None = None):
         monkeypatch.setenv("GW_TOKENS", tokens)
     else:
         monkeypatch.delenv("GW_TOKENS", raising=False)
+        monkeypatch.setenv("GW_ALLOW_ANON", "true")    # 测试开匿名模式（生产默认拒启动）
     monkeypatch.setenv("GW_TOKENS_FILE", "gateway/__nonexistent__.yaml")  # 避免读到真 tokens 文件
     import gateway.app as gw
     importlib.reload(gw)
     return gw
+
+
+def test_no_tokens_without_allow_anon_refuses_start(monkeypatch):
+    monkeypatch.setenv("GW_BACKEND", "scripted")
+    monkeypatch.delenv("GW_TOKENS", raising=False)
+    monkeypatch.delenv("GW_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("GW_TOKENS_FILE", "gateway/__nonexistent__.yaml")
+    import gateway.app as gw
+    importlib.reload(gw)
+    with pytest.raises(RuntimeError):       # fail-closed：无 token 且未开匿名 → 拒绝启动
+        with TestClient(gw.app):
+            pass
 
 
 @pytest.fixture
@@ -36,6 +49,22 @@ def test_chat_completions_openai_shape(client):
     assert r["choices"][0]["message"]["role"] == "assistant"
     assert "你好" in r["choices"][0]["message"]["content"]   # scripted 回显
     assert "usage" in r
+
+
+def test_oversized_body_rejected_413(monkeypatch):
+    monkeypatch.setenv("GW_MAX_BODY_BYTES", "2000")
+    gw = _client(monkeypatch)                       # 无 token → 内部设 GW_ALLOW_ANON
+    with TestClient(gw.app) as c:
+        big = {"messages": [{"role": "user", "content": "x" * 5000}]}
+        assert c.post("/v1/chat/completions", json=big).status_code == 413
+
+
+def test_too_many_messages_rejected_413(monkeypatch):
+    monkeypatch.setenv("GW_MAX_MESSAGES", "3")
+    gw = _client(monkeypatch)
+    with TestClient(gw.app) as c:
+        many = {"messages": [{"role": "user", "content": "hi"} for _ in range(5)]}
+        assert c.post("/v1/chat/completions", json=many).status_code == 413
 
 
 def test_models_endpoint(client):
@@ -72,6 +101,7 @@ def test_routing_served_target_and_external(monkeypatch):
     monkeypatch.setenv("GW_ROUTE_TABLE", "ext-model=external")  # 把 ext-model 路由到外部
     monkeypatch.setenv("GW_TOKENS_FILE", "gateway/__nonexistent__.yaml")
     monkeypatch.delenv("GW_TOKENS", raising=False)
+    monkeypatch.setenv("GW_ALLOW_ANON", "true")
     import gateway.app as gw
     importlib.reload(gw)
     with TestClient(gw.app) as c:

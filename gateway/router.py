@@ -24,9 +24,9 @@ class Router:
     def route(self, model: str) -> list[tuple[str, object]]:
         explicit = self.table.get(model)
         if explicit and explicit != "auto" and explicit in self.targets:
+            # 显式路由 = 只去该目标，绝不偷偷兜底到别的 target（防把含人设/RAG/记忆的
+            # prompt 在 pool 失败时外泄到第三方 API；跨边界兜底只走默认/auto 策略且受 allow_targets 限）
             order = [explicit]
-            if self.fallback and self.fallback != explicit:
-                order.append(self.fallback)         # 显式目标也给个兜底
         else:
             self._n += 1
             external_first = (self.split > 0 and self.fallback

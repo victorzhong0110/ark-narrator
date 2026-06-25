@@ -52,5 +52,25 @@
 
 修复后复跑：bandit High0/Med0/Low1（顺手修了 Trojan-Source：归一化正则改用 \uXXXX 转义文本）、活体渗透仍 10/10、全测试 145 过。
 
+## ⑥ Codex 第二轮 deep scan（12 findings，网关分离后）→ 处置
+扫描 commit 2cfc6fd（控制面/计算面分离后）。8 条代码修复 + 4 条按真实情况判定（设计如此/已缓解/部署项），逐条记录：
+
+| # | 严重度 | 问题 | 处置 |
+|---|---|---|---|
+| 1 | **High** | 网关无 token 时 fail-open 到匿名裸模型 | **修**：无 token 默认拒绝启动；匿名须显式 GW_ALLOW_ANON(仅dev)；compose 网关改 expose-only 不发布主机端口 |
+| 2 | **High** | 生产模板 auth=none / REPLACE_ME 占位密钥 | **修**：拒绝 REPLACE_ME 占位符启动；真后端(api/pool/mlx)+none 拒绝启动；k8s base 默认 jwt+fail-closed |
+| 3 | Med | 网关只计请求数，不限体积/输出/流缓冲 | **修**：GW_MAX_BODY_BYTES/MAX_OUTPUT_TOKENS/MAX_MESSAGES/MAX_PROMPT_CHARS，封顶 max_tokens |
+| 4 | Med | apikey 模式信任 body 的 player_id | **设计如此**：apikey=服务级共享密钥(受信游戏后端代调，玩家身份游戏侧已鉴权)；逐玩家隔离用 jwt。强化告警+文档 |
+| 5 | Med | 遗留 inference.server 无鉴权/护栏+通配CORS | **修**：默认绑 127.0.0.1、去通配 CORS、弃用告警、README 改指 app.server |
+| 6 | Med | 长期记忆仅正则查注入 | **已缓解**：上轮已加 detect_injection+数据框定；语义级分类器属增强项，接受残留风险 |
+| 7 | Med | 内部路由兜底到外部 API 泄露 prompt | **修**：显式路由不再偷偷兜底到外部；跨边界兜底只走默认/auto 且受 allow_targets 限 |
+| 8 | Med | Redis 节点注册可劫持 prompt 流量 | **部分缓解**：上轮已拒元数据/链路本地；空白名单升 warning；Redis 鉴权+节点签名属部署项，文档化 |
+| 9 | Med | 控制面 body 限依赖 Content-Length | **修**：ChatRequest Pydantic 字段约束(message/history 上限)+k8s ingress proxy-body-size+nginx 已有 client_max_body_size |
+| 10 | Med | Redis 故障时限流/配额 fail-open | **修**：rate_allow 失败降级为进程内本地限流(非放行)；网关配额本就退内存(每实例) |
+| 11 | Med | 云审不可用静默降级仅本地 | **修**：k8s 生产档默认 ARK_CLOUD_AUDIT_FAIL_CLOSED=true(运行时已 honor)；compose/dev 保持宽松 |
+| 12 | Low | env GW_TOKENS 无限额/不限目标 | **文档**：env token 仅 dev；生产用 tokens.yaml 配 rate_limit/daily_quota/allow_targets |
+
+修复后复跑：测试 167→174、bandit High0/Med0/Low1、网关 fail-closed 实测(无token退出码3、GW_ALLOW_ANON 可起)。
+
 ## 待公司侧（非代码）
 第三方渗透测试、备案 + AI 标识办法法务、云审真凭证接入、内部 mTLS、安全合规评审。

@@ -4,6 +4,7 @@ metadata:
   name: ark-app
   annotations:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-body-size: "128k"   # 边缘 body 上限,不依赖 Content-Length
 spec:
   rules:
     - host: ark.example.com

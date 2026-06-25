@@ -36,6 +36,13 @@ class GatewaySettings:
     external_split: float = field(default_factory=lambda: float(os.getenv("GW_EXTERNAL_SPLIT", "0")))
     # 路由表："model=target,model2=target2"，如 "deepseek-chat=external,ark-local=pool"
     route_table: str = field(default_factory=lambda: os.getenv("GW_ROUTE_TABLE", ""))
+    # 安全：无 token 时是否允许匿名开放模式（仅 dev！生产必须配 token，否则拒绝启动）
+    allow_anon: bool = field(default_factory=lambda: _bool("GW_ALLOW_ANON", False))
+    # 资源上限（防 DoS/成本放大）：请求体字节、单次最大输出 token、消息条数、prompt 总字符
+    max_body_bytes: int = field(default_factory=lambda: int(os.getenv("GW_MAX_BODY_BYTES", "65536")))
+    max_output_tokens: int = field(default_factory=lambda: int(os.getenv("GW_MAX_OUTPUT_TOKENS", "1024")))
+    max_messages: int = field(default_factory=lambda: int(os.getenv("GW_MAX_MESSAGES", "60")))
+    max_prompt_chars: int = field(default_factory=lambda: int(os.getenv("GW_MAX_PROMPT_CHARS", "24000")))
 
 
 def load_gateway_settings() -> GatewaySettings:

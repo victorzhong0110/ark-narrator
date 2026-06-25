@@ -1,6 +1,10 @@
 """
 ArkNarrator FastAPI inference server.
 
+⚠ DEPRECATED / 遗留：这是微调期的裸推理 demo 服务，无鉴权/无护栏/无审计/无身份隔离。
+生产请用受护栏保护的控制面 `app.server:app`（见 README / docs/DIALOGUE_PRODUCT.md）。
+本服务默认仅绑 127.0.0.1，且不开放跨域；切勿暴露到公网。
+
 Endpoints
 ---------
 GET  /health              — liveness check
@@ -25,7 +29,6 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -41,18 +44,15 @@ engine: ArkNarratorEngine | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global engine
+    logger.warning("⚠ inference.server 是遗留裸推理 demo（无鉴权/护栏/审计）——"
+                   "生产请用 app.server:app。本服务仅供本地调试，勿暴露公网。")
     model_key = os.getenv("MODEL_KEY", "qwen")
     engine = ArkNarratorEngine(model_key=model_key)
     yield
 
 
-app = FastAPI(title="ArkNarrator API", version="0.2.0", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 不挂通配 CORS：demo UI 与 API 同源即可，避免任意站点跨域直调裸模型
+app = FastAPI(title="ArkNarrator API (deprecated demo)", version="0.2.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "inference.server:app",
-        host=os.getenv("API_HOST", "0.0.0.0"),
+        host=os.getenv("API_HOST", "127.0.0.1"),   # 默认仅本机；遗留 demo 不应绑全网卡
         port=int(os.getenv("API_PORT", "8000")),
         reload=False,
     )

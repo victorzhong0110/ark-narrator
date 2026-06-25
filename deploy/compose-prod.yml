@@ -86,12 +86,13 @@ services:
       GW_ROUTE_FALLBACK: ${GW_ROUTE_FALLBACK:-external}
       GW_EXTERNAL_SPLIT: ${GW_EXTERNAL_SPLIT:-0}
       GW_ROUTE_TABLE: ${GW_ROUTE_TABLE:-}
+      GW_ALLOW_ANON: ${GW_ALLOW_ANON:-}    # 留空=无token拒绝启动(fail-closed)；仅 dev 可设 true
     command: ["python", "-m", "gateway.app"]
     depends_on:
       redis:
         condition: service_healthy
-    expose: ["8080"]
-    ports: ["8080:8080"]
+    expose: ["8080"]                        # 仅内网(控制面经 docker 网络访问)；不发布到主机，
+    # 绝不对外暴露裸模型网关。若确需对外，必须前置鉴权代理。调试可临时加 ports: ["127.0.0.1:8080:8080"]
     profiles: ["gateway"]
     healthcheck:
       test: ["CMD", "python", "-c",

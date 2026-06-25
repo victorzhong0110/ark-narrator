@@ -27,6 +27,12 @@ def test_default_internal_first_with_fallback():
     assert _names(r.route("x")) == ["pool", "external"]
 
 
+def test_explicit_route_has_no_external_fallback():
+    # 显式路由到 pool 绝不偷偷兜底到 external（防含人设/记忆的 prompt 外泄第三方）
+    r = _router(table={"x": "pool"}, default="pool", fallback="external")
+    assert _names(r.route("x")) == ["pool"]
+
+
 def test_no_fallback_single_target():
     r = Router(targets={"pool": _B()}, default="pool", fallback=None)
     assert _names(r.route("x")) == ["pool"]
